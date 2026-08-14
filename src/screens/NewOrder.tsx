@@ -1100,8 +1100,10 @@ export default function NewOrder() {
               )}
             </div>
 
-            <div style={{ flex: "1 1 280px", minWidth: 280, maxWidth: 380, position: "sticky", top: 0, maxHeight: "calc(100vh - 88px)", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* The summary column flows with the page — an inner scroll area here
+                clipped the notes fields behind the sticky footer. */}
+            <div style={{ flex: "1 1 280px", minWidth: 280, maxWidth: 380, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <PaymentSummary
                   lines={summaryLines}
                   total={AUD(total)}
