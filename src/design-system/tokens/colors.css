@@ -1,0 +1,119 @@
+:root{
+  /* ---- Base palette ---- */
+  --blue-300:#93c5fd; --blue-400:#60a5fa; --blue-500:#3b82f6; --blue-600:#2563eb; --blue-700:#1d4ed8;
+  --cyan-300:#67e8f9; --cyan-400:#22d3ee; --cyan-500:#06b6d4; --cyan-600:#0891b2;
+  --amber-300:#fcd34d; --amber-400:#fbbf24; --amber-500:#f59e0b; --amber-600:#d97706;
+  --emerald-400:#34d399; --emerald-500:#10b981; --emerald-600:#059669;
+  --violet-400:#a78bfa; --violet-500:#8b5cf6; --violet-600:#7c3aed;
+  --orange-400:#fb923c; --orange-500:#f97316;
+  --red-400:#f87171; --red-500:#ef4444; --red-600:#dc2626;
+  --slate-300:#cbd5e1; --slate-400:#94a3b8; --slate-500:#64748b; --slate-600:#475569;
+
+  /* ---- Neutral ramp (dark base) ---- */
+  --ink-000:#06070f;
+  --ink-050:#090b15;
+  --ink-100:#0f1322;
+  --ink-200:#161b2e;
+  --ink-300:#1e2540;
+  --ink-400:#262e47;
+  --ink-500:#3a445f;
+  --paper-100:#6f7c9b;
+  --paper-200:#a8b3cf;
+  --paper-300:#d5dcee;
+  --paper-400:#f1f5ff;
+
+  /* ---- Semantic surfaces ---- */
+  --bg-app:var(--ink-050);
+  --bg-sunken:var(--ink-000);
+  --surface-card:var(--ink-100);
+  --surface-raised:var(--ink-200);
+  --surface-input:var(--ink-200);
+  --surface-active:var(--ink-300);
+  --surface-overlay:rgba(6,7,15,.72);
+
+  /* ---- Semantic text ---- */
+  --text-primary:var(--paper-400);
+  --text-body:var(--paper-300);
+  --text-muted:var(--paper-200);
+  --text-faint:var(--paper-100);
+  --text-inverse:var(--ink-000);
+  --text-accent:var(--blue-400);
+
+  /* ---- Borders ---- */
+  --border-subtle:#1c2237;
+  --border-default:var(--ink-400);
+  --border-strong:var(--ink-500);
+  --border-accent:rgba(59,130,246,.55);
+
+  /* ---- Brand ---- */
+  --brand-primary:var(--blue-500);
+  --brand-primary-hover:var(--blue-400);
+  --brand-primary-press:var(--blue-600);
+  --brand-secondary:var(--cyan-500);
+  --brand-attention:var(--amber-500);
+  --brand-on-primary:#04101f;
+  --gradient-brand:linear-gradient(135deg,#3b82f6,#06b6d4); /* @kind color */
+  --gradient-brand-soft:linear-gradient(135deg,rgba(59,130,246,.18),rgba(6,182,212,.12)); /* @kind color */
+  --gradient-sheen:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,0)); /* @kind color */
+
+  /* ---- Feedback ---- */
+  --feedback-success:var(--emerald-500);
+  --feedback-warning:var(--amber-500);
+  --feedback-danger:var(--red-500);
+  --feedback-info:var(--blue-500);
+  --feedback-success-bg:rgba(16,185,129,.12);
+  --feedback-warning-bg:rgba(245,158,11,.12);
+  --feedback-danger-bg:rgba(239,68,68,.12);
+  --feedback-info-bg:rgba(59,130,246,.12);
+
+  /* =========================================================================
+     ONE HUE DIMENSION.
+
+     In the live product three unrelated dimensions share one palette:
+     customerTypeColors.ts (account=green, trade=blue, residential=slate),
+     orderTypeColors.ts (delivery=blue, pickup=orange) and the inline
+     PIPELINE_STAGES map (preparing=blue, delivered=green, loading=orange,
+     en_route=purple, on_hold=yellow). Blue means three different things and
+     green means two, depending where you look.
+
+     The rule in this system: HUE ENCODES ORDER STATE AND NOTHING ELSE.
+     Customer type and fulfilment method are encoded by icon and chip weight
+     (filled / outline / plain), not colour. The single exception is red —
+     red always means "needs attention" in any dimension.
+     ========================================================================= */
+
+  /* ---- Order lifecycle — the full orders.status enum (11 values) ---- */
+  --status-on-hold:var(--amber-300);          --status-on-hold-bg:rgba(252,211,77,.12);
+  --status-back-order:var(--amber-300);       --status-back-order-bg:rgba(252,211,77,.12);
+  --status-requested:var(--slate-400);        --status-requested-bg:rgba(148,163,184,.12);
+  --status-preparing:var(--amber-400);        --status-preparing-bg:rgba(251,191,36,.12);
+  --status-loading:var(--blue-400);           --status-loading-bg:rgba(96,165,250,.12);
+  --status-enroute:var(--violet-400);         --status-enroute-bg:rgba(167,139,250,.12);
+  --status-delivered:var(--emerald-400);      --status-delivered-bg:rgba(52,211,153,.12);
+  --status-cancelled:var(--red-400);          --status-cancelled-bg:rgba(248,113,113,.12);
+  /* pickup branch — off-board statuses, surfaced in Order Management and reports */
+  --status-ready-pickup:var(--cyan-400);      --status-ready-pickup-bg:rgba(34,211,238,.12);
+  --status-pickup-scheduled:var(--slate-300); --status-pickup-scheduled-bg:rgba(203,213,225,.1);
+  --status-pickup-progress:var(--blue-300);   --status-pickup-progress-bg:rgba(147,197,253,.12);
+  --status-pickup-complete:var(--emerald-400);--status-pickup-complete-bg:rgba(52,211,153,.12);
+
+  /* ---- Payment status — settlement state, same lifecycle hue family ---- */
+  --pay-paid:var(--emerald-400);     --pay-paid-bg:rgba(52,211,153,.12);
+  --pay-pending:var(--amber-400);    --pay-pending-bg:rgba(251,191,36,.12);
+  --pay-failed:var(--red-400);       --pay-failed-bg:rgba(248,113,113,.12);
+  --pay-invoiced:var(--cyan-400);    --pay-invoiced-bg:rgba(34,211,238,.12);
+
+  /* ---- Customer type — NON-HUE. Weight + icon only. ----
+     account = filled neutral, trade = outline neutral, residential = plain. */
+  --dim-filled-fg:var(--paper-400);   --dim-filled-bg:rgba(213,220,238,.14);
+  --dim-outline-fg:var(--paper-200);  --dim-outline-bg:transparent;
+  --dim-plain-fg:var(--paper-100);    --dim-plain-bg:transparent;
+
+  /* ---- Fulfilment method — NON-HUE. Icon only, neutral chip. ---- */
+  --method-fg:var(--paper-200);
+  --method-bg:rgba(168,179,207,.08);
+
+  /* ---- Attention — the one hue that crosses dimensions ---- */
+  --attention:var(--red-400);
+  --attention-bg:rgba(248,113,113,.12);
+}

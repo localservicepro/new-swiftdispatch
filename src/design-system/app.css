@@ -1,0 +1,134 @@
+/* App-level style layer, taken verbatim from the design ("SwiftDispatch Admin.dc.html").
+   Token files under ./tokens are the design system; this file adds the pieces the
+   admin prototype defines on top: --om-* variables and the full light theme. */
+  html, body { margin:0; height:100%; background:var(--bg-app); }
+  a { color:var(--brand-primary); text-decoration:none; }
+  a:hover { color:var(--brand-primary-hover); }
+
+  /* Dark is the design system's default; these are the pieces it doesn't tokenise. */
+  :root {
+    /* The system's own faint tone measures 4.43:1 on card fill — a hair under
+       the 4.5 floor at the 11px eyebrow size, which this design uses heavily. */
+    --text-faint:#7c89a8;
+    --dim-plain-fg:#8593b2;
+    --om-topbar:rgba(9,11,21,.85);
+    --om-scrim:rgba(6,7,15,.72);
+    --om-overlay-shadow:0 24px 64px rgba(0,0,0,.6);
+    --om-drop-bg:rgba(59,130,246,.08);
+    --om-inline-add-bg:rgba(59,130,246,.06);
+    --om-chip-active-bg:rgba(59,130,246,.14);
+    --om-split-bg:rgba(6,182,212,.05);
+    --om-split-ribbon-bg:rgba(6,182,212,.10);
+    --om-split-border:rgba(6,182,212,.28);
+    --om-warn-chip-bg:rgba(245,158,11,.14);
+    --om-scroll-thumb:#262e47;
+  }
+
+  /* Light: the same ramp read from the other end. Brand, status and attention
+     hues step one value darker so they still carry on white. */
+  [data-theme="light"] {
+    --bg-app:#f4f6fb;
+    --bg-sunken:#e9edf6;
+    --surface-card:#ffffff;
+    --surface-raised:#f2f5fb;
+    --surface-input:#ffffff;
+    --surface-active:#e3e9f6;
+    --surface-overlay:rgba(255,255,255,.86);
+
+    --text-primary:#0d1424;
+    --text-body:#26314a;
+    --text-muted:#475471;
+    --text-faint:#5a6684;
+    --text-inverse:#ffffff;
+    --text-accent:var(--blue-600);
+
+    --border-subtle:#e4e9f4;
+    --border-default:#cfd8ea;
+    --border-strong:#adb9d2;
+    --border-accent:rgba(37,99,235,.5);
+
+    --brand-primary:var(--blue-600);
+    --brand-primary-hover:var(--blue-500);
+    --brand-primary-press:var(--blue-700);
+    --brand-secondary:#0e7490;
+    --brand-on-primary:#ffffff; /* white clears 5.2:1 on blue-600; dark theme uses near-black on blue-500 */
+    --gradient-sheen:linear-gradient(180deg,rgba(13,20,36,.03),rgba(13,20,36,0));
+
+    --feedback-success:var(--emerald-600);
+    --feedback-warning:var(--amber-600);
+    --feedback-danger:#b91c1c;
+    --feedback-info:var(--blue-600);
+    --feedback-success-bg:rgba(5,150,105,.10);
+    --feedback-warning-bg:rgba(217,119,6,.10);
+    --feedback-danger-bg:rgba(220,38,38,.10);
+    --feedback-info-bg:rgba(37,99,235,.10);
+
+    --status-on-hold:var(--amber-600);          --status-on-hold-bg:rgba(217,119,6,.12);
+    --status-back-order:var(--amber-600);       --status-back-order-bg:rgba(217,119,6,.12);
+    --status-requested:var(--slate-600);        --status-requested-bg:rgba(71,85,105,.10);
+    --status-preparing:var(--amber-600);        --status-preparing-bg:rgba(217,119,6,.12);
+    --status-loading:var(--blue-600);           --status-loading-bg:rgba(37,99,235,.10);
+    --status-enroute:var(--violet-600);         --status-enroute-bg:rgba(124,58,237,.10);
+    --status-delivered:var(--emerald-600);      --status-delivered-bg:rgba(5,150,105,.10);
+    --status-cancelled:var(--red-600);          --status-cancelled-bg:rgba(220,38,38,.10);
+    --status-ready-pickup:#0e7490;      --status-ready-pickup-bg:rgba(14,116,144,.10);
+    --status-pickup-scheduled:var(--slate-600); --status-pickup-scheduled-bg:rgba(71,85,105,.10);
+    --status-pickup-progress:var(--blue-600);   --status-pickup-progress-bg:rgba(37,99,235,.10);
+    --status-pickup-complete:var(--emerald-600);--status-pickup-complete-bg:rgba(5,150,105,.10);
+
+    --pay-paid:var(--emerald-600);   --pay-paid-bg:rgba(5,150,105,.10);
+    --pay-pending:var(--amber-600);  --pay-pending-bg:rgba(217,119,6,.12);
+    --pay-failed:var(--red-600);     --pay-failed-bg:rgba(220,38,38,.10);
+    --pay-invoiced:#0e7490;  --pay-invoiced-bg:rgba(14,116,144,.10);
+
+    --dim-filled-fg:#0d1424;  --dim-filled-bg:rgba(13,20,36,.08);
+    --dim-outline-fg:#4d5977; --dim-outline-bg:transparent;
+    --dim-plain-fg:#5a6684;   --dim-plain-bg:transparent;
+    --method-fg:#4d5977;      --method-bg:rgba(77,89,119,.08);
+
+    --attention:#b91c1c;
+    --attention-bg:rgba(220,38,38,.10);
+
+    --om-topbar:rgba(255,255,255,.85);
+    --om-scrim:rgba(23,31,50,.42);
+    --om-overlay-shadow:0 24px 64px rgba(20,29,52,.18);
+    --om-drop-bg:rgba(37,99,235,.08);
+    --om-inline-add-bg:rgba(37,99,235,.05);
+    --om-chip-active-bg:rgba(37,99,235,.10);
+    --om-split-bg:rgba(8,145,178,.05);
+    --om-split-ribbon-bg:rgba(8,145,178,.09);
+    --om-split-border:rgba(8,145,178,.30);
+    --om-warn-chip-bg:rgba(217,119,6,.12);
+    --om-scroll-thumb:#c6cfe2;
+
+    /* Eleven places in the design system reach past the semantic layer to a raw
+       300/400 palette value — legible on #090b15, far too pale on white. Remap
+       the raw values themselves so every one of those call sites follows. */
+    --blue-300:#1d4ed8;
+    --cyan-300:#0e7490;
+    --amber-300:#b45309;
+    --amber-400:#b45309;
+    --emerald-400:#047857;
+    --red-400:#dc2626;
+    --violet-400:#6d28d9;
+    --slate-400:#475569;
+
+    /* The neutral ramp carries the Switch's off track and other quiet fills, so it needs
+       light values here — but only 300–500; 100/200 are overridden on `option` alone. */
+    --ink-300:#e3e9f6;
+    --ink-400:#7f8ea8;
+    --ink-500:#94a3bd;
+
+    --emerald-600:#047857;
+    --amber-600:#b45309;
+  }
+
+  /* Select writes `background: var(--ink-200)` inline on each option, so the popup can only
+     be reached by redefining the token — but scoped to the option itself, because the same
+     ramp carries the Switch's OFF track colour. */
+  select option { color:var(--text-primary); }
+  [data-theme="light"] select option { --ink-200:#ffffff; --ink-100:#ffffff; --ink-050:#f4f6fb; }
+
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background:var(--om-scroll-thumb); border-radius:8px; border:3px solid transparent; background-clip:padding-box; }
+  ::-webkit-scrollbar-track { background:transparent; }

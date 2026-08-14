@@ -1,0 +1,18 @@
+/* Token order matches the design's own helmet exactly. */
+@import "./design-system/tokens/fonts.css";
+@import "./design-system/tokens/colors.css";
+@import "./design-system/tokens/typography.css";
+@import "./design-system/tokens/spacing.css";
+@import "./design-system/tokens/radius.css";
+@import "./design-system/tokens/elevation.css";
+@import "./design-system/tokens/motion.css";
+@import "./design-system/tokens/layout.css";
+@import "./design-system/tokens/base.css";
+@import "./design-system/app.css";
+
+@tailwind utilities;
+
+#root {
+  height: 100vh;
+  min-height: 600px;
+}
