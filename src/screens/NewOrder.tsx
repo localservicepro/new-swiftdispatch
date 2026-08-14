@@ -955,12 +955,10 @@ export default function NewOrder() {
                                       const r = suburbRate(suburb.id, suburbs);
                                       patchDraft(d.letter, { street: st, suburbId: suburb.id, fee: r.fee, feeSource: "suburb" });
                                     } else {
+                                      /* Unknown suburb: keep the typed address, suburb stays a manual pick.
+                                         The field shows the warning inline. */
                                       patchDraft(d.letter, { street: st, suburbId: null, fee: 0, feeSource: "suburb" });
-                                      app.toast({
-                                        tone: "warning",
-                                        title: `${nm} isn't in your Suburbs list`,
-                                        description: "Add it under Operate › Suburbs with a delivery rate — the fee always comes from the suburb, so this order stays blocked until then.",
-                                      });
+                                      void nm;
                                     }
                                   }}
                                 />
