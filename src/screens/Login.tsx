@@ -129,6 +129,9 @@ export default function Login() {
             <Icon name="truck" size={16} color="var(--brand-primary)" />
             Driver sign-in
           </a>
+          <a href="#/portal" style={{ fontSize: 12 }}>
+            Customer portal
+          </a>
         </div>
       </div>
     </div>
