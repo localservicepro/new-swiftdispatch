@@ -39,8 +39,16 @@ export default function AddressSearch({
     void loadPlaces()
       .then((google) => {
         if (!google || !inputRef.current) return;
+        /* Victorian suburbs only (SHGS's actual delivery area, per the brief) —
+           strict bounds over VIC, not just a bias. */
+        const vic = new google.maps.LatLngBounds(
+          new google.maps.LatLng(-39.2, 140.96),
+          new google.maps.LatLng(-33.98, 150.0)
+        );
         ac = new google.maps.places.Autocomplete(inputRef.current, {
           componentRestrictions: { country: "au" },
+          bounds: vic,
+          strictBounds: true,
           fields: ["address_components", "formatted_address"],
           types: ["address"],
         });
