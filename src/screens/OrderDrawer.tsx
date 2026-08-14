@@ -3,6 +3,7 @@ import { useApp } from "../store/store";
 import { useUi, nextStatusOptions } from "../store/ui";
 import {
   AUD,
+  adjustmentOf,
   feeOf,
   resolvedSuburbFee,
   goodsOf,
@@ -102,6 +103,19 @@ export default function OrderDrawer() {
         ...(o.method === "delivery" && Number(o.fuel_surcharge) > 0
           ? [{ label: "Fuel surcharge", value: AUD(Number(o.fuel_surcharge)) }]
           : []),
+        ...(() => {
+          const adj = adjustmentOf(o, goodsOf(its));
+          if (!adj) return [];
+          return [
+            {
+              label:
+                (o.adjustment_type === "percent" ? `Adjustment — ${Math.abs(Number(o.adjustment_value))}% ` : "Adjustment — ") +
+                (adj < 0 ? "discount" : "surcharge"),
+              value: (adj < 0 ? "−" : "+") + AUD(Math.abs(adj)),
+              negative: adj < 0,
+            },
+          ];
+        })(),
         { label: "Includes GST", value: AUD(totalOf(o) / 11) },
       ],
       total: AUD(totalOf(o)),

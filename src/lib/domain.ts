@@ -176,7 +176,11 @@ export const resolvedSuburbFee = (
   suburbs: Suburb[],
   pay: DeliveryPricing | null | undefined
 ): { base: number; markup: number; total: number } => {
-  const base = suburbRate(suburbId, suburbs).fee || 0;
+  const rate = suburbRate(suburbId, suburbs);
+  /* No resolvable suburb means no fee at all — markup never applies to nothing,
+     and the order is blocked until a suburb with a rate is chosen (§5.8). */
+  if (rate.missing) return { base: 0, markup: 0, total: 0 };
+  const base = rate.fee || 0;
   const markup = markupOn(base, pay);
   return { base, markup, total: Math.round((base + markup) * 100) / 100 };
 };
@@ -195,16 +199,21 @@ export const feeOf = (
 
 export const goodsOf = (items: OrderItem[]) => items.reduce((t, i) => t + Number(i.line_total), 0);
 
+/* adjustment_value is signed: negative discounts, positive surcharges. */
+export const adjustmentOf = (
+  o: Pick<Order, "adjustment_type" | "adjustment_value">,
+  goods: number
+): number => {
+  const v = Number(o.adjustment_value) || 0;
+  if (o.adjustment_type === "percent") return Math.round(goods * v) / 100;
+  if (o.adjustment_type === "amount") return v;
+  return 0;
+};
+
 export const orderTotal = (o: Order, items: OrderItem[], suburbs: Suburb[], pay?: DeliveryPricing | null) => {
   const goods = goodsOf(items);
   const fee = o.method === "delivery" ? feeOf(o, suburbs, pay) + (Number(o.fuel_surcharge) || 0) : 0;
-  const adjust =
-    o.adjustment_type === "percent"
-      ? -goods * (Number(o.adjustment_value) || 0) / 100
-      : o.adjustment_type === "amount"
-        ? -(Number(o.adjustment_value) || 0)
-        : 0;
-  return Math.round((goods + fee + adjust) * 100) / 100;
+  return Math.round((goods + fee + adjustmentOf(o, goods)) * 100) / 100;
 };
 
 /* Stop credit: manual hold, or the balance over the limit on an account. */

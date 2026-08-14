@@ -40,6 +40,7 @@ interface UiState {
   fulfilMethod: "delivery" | "pickup";
   qtyStep: number;
   adjustType: "Percent" | "Dollars";
+  adjustDirection: "discount" | "surcharge";
   settleMethod: string | null;
   poNumber: string;
   orderNotesDraft: string;
@@ -87,6 +88,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     fulfilMethod: "delivery" as "delivery" | "pickup",
     qtyStep: 1,
     adjustType: "Percent" as "Percent" | "Dollars",
+    adjustDirection: "discount" as "discount" | "surcharge",
     settleMethod: null as string | null,
     poNumber: "",
     orderNotesDraft: "",

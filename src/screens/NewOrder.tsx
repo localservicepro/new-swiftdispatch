@@ -87,7 +87,14 @@ export default function NewOrder() {
   const fuelTotal = yard || !isDelivery ? 0 : fuelOf(paySettings) * drafts.length;
   const [adjustValue, setAdjustValue] = useState("");
   const adjustNum = parseFloat(adjustValue) || 0;
-  const adjust = ui.adjustType === "Percent" ? -goods * (adjustNum / 100) : -adjustNum;
+  /* An adjustment goes either way: a discount off the goods or a surcharge on
+     top. The value stored on the order is signed — negative discounts. */
+  const adjustSigned = ui.adjustDirection === "surcharge" ? adjustNum : -adjustNum;
+  const adjust = ui.adjustType === "Percent" ? Math.round(goods * adjustSigned) / 100 : adjustSigned;
+  const isSurcharge = ui.adjustDirection === "surcharge";
+  const adjustLabel =
+    (ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}% ` : "Adjustment — ") +
+    (isSurcharge ? "surcharge" : "discount");
   const total = goods + feeTotal + fuelTotal + adjust;
 
   const setCart = (next: CartLine[]) => ui.set({ cart: next });
@@ -226,9 +233,9 @@ export default function NewOrder() {
     });
   if (adjustNum > 0)
     summaryLines.push({
-      label: ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}%` : "Adjustment — flat",
-      value: "−" + AUD(Math.abs(adjust)),
-      negative: true,
+      label: adjustLabel,
+      value: (adjust < 0 ? "−" : "+") + AUD(Math.abs(adjust)),
+      negative: adjust < 0,
     });
   summaryLines.push({ label: "Includes GST", value: AUD(total / 11) });
 
@@ -251,7 +258,7 @@ export default function NewOrder() {
       orderNotes: ui.orderNotesDraft,
       deliveryNotes: ui.deliveryNotesDraft,
       adjustmentType: adjustNum > 0 ? (ui.adjustType === "Percent" ? "percent" : "amount") : null,
-      adjustmentValue: adjustNum > 0 ? adjustNum : null,
+      adjustmentValue: adjustNum > 0 ? adjustSigned : null,
       fuelSurcharge: yard || !isDelivery ? 0 : fuelOf(paySettings),
     });
     setCreating(false);
@@ -290,6 +297,42 @@ export default function NewOrder() {
 
   const suburbOptions = suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }));
   const truckOptions = trucks.map((t) => ({ value: t.id, label: `${t.rego} — ${t.type}` }));
+
+  /* One adjustment, edited from either step: direction (discount or surcharge),
+     amount, and whether that amount is a percentage of goods or dollars. */
+  const AdjustmentFields = () => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <Tabs
+        items={[
+          { id: "discount", label: "Discount" },
+          { id: "surcharge", label: "Surcharge" },
+        ]}
+        activeId={ui.adjustDirection}
+        onSelect={(id: string) => ui.set({ adjustDirection: id as "discount" | "surcharge" })}
+        variant="segmented"
+        fullWidth
+      />
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 100 }}>
+          <Input
+            size="sm"
+            label="Adjustment"
+            aria-label="Adjustment value"
+            value={adjustValue}
+            onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))}
+          />
+        </div>
+        <Select
+          size="sm"
+          label="Type"
+          options={["Percent", "Dollars"]}
+          value={ui.adjustType}
+          onChange={(e: any) => ui.set({ adjustType: e.target.value })}
+          style={{ width: 118, flexShrink: 0 }}
+        />
+      </div>
+    </div>
+  );
 
   const customerPickerCard = (
     <Card
@@ -785,19 +828,7 @@ export default function NewOrder() {
                     No items yet. Tap a product to load it in.
                   </div>
                 )}
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ flex: 1, minWidth: 100 }}>
-                    <Input size="sm" label="Adjustment" aria-label="Adjustment value" value={adjustValue} onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))} />
-                  </div>
-                  <Select
-                    size="sm"
-                    label="Type"
-                    options={["Percent", "Dollars"]}
-                    value={ui.adjustType}
-                    onChange={(e: any) => ui.set({ adjustType: e.target.value })}
-                    style={{ width: 118, flexShrink: 0 }}
-                  />
-                </div>
+                <AdjustmentFields />
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 10, borderTop: "1px solid var(--border-subtle)" }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
                     <span style={{ fontSize: 12, color: "var(--text-faint)" }}>Lines</span>
@@ -807,11 +838,13 @@ export default function NewOrder() {
                   </div>
                   {adjustNum > 0 && (
                     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
-                      <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
-                        {ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}%` : "Adjustment — flat"}
-                      </span>
-                      <span className="tabular" style={{ fontSize: 12, fontWeight: 500, color: "var(--feedback-success)" }}>
-                        −{AUD(Math.abs(adjust))}
+                      <span style={{ fontSize: 12, color: "var(--text-faint)" }}>{adjustLabel}</span>
+                      <span
+                        className="tabular"
+                        style={{ fontSize: 12, fontWeight: 500, color: adjust < 0 ? "var(--feedback-success)" : "var(--attention)" }}
+                      >
+                        {adjust < 0 ? "−" : "+"}
+                        {AUD(Math.abs(adjust))}
                       </span>
                     </div>
                   )}
@@ -825,7 +858,7 @@ export default function NewOrder() {
                     {lines.length
                       ? yard
                         ? "Delivery is not charged on a counter sale. Payment comes next."
-                        : "Delivery fees and any adjustment are added on the next step."
+                        : "Delivery fees are added on the next step."
                       : "Tap a product to start the order."}
                   </div>
                   <Button variant="primary" size="lg" iconLeft="arrow-right" fullWidth disabled={lines.length === 0} onClick={() => lines.length && ui.set({ orderStep: 2 })}>
@@ -1177,25 +1210,7 @@ export default function NewOrder() {
                         record.
                       </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                      <div style={{ flex: 1, minWidth: 100 }}>
-                        <Input
-                          size="sm"
-                          label="Adjustment"
-                          aria-label="Adjustment value"
-                          value={adjustValue}
-                          onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))}
-                        />
-                      </div>
-                      <Select
-                        size="sm"
-                        label="Type"
-                        options={["Percent", "Dollars"]}
-                        value={ui.adjustType}
-                        onChange={(e: any) => ui.set({ adjustType: e.target.value })}
-                        style={{ width: 118, flexShrink: 0 }}
-                      />
-                    </div>
+                    <AdjustmentFields />
                     <Input size="sm" label="PO number" value={ui.poNumber} onChange={(e: any) => ui.set({ poNumber: e.target.value })} placeholder="Customer's PO reference" />
                     <Textarea
                       size="sm"
