@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { AUD, AUD0, dmy, suburbRate, unitPrice } from "../lib/domain";
-import type { Customer, CustomerSite, Order, OrderItem, Product, ProductCategory, Special, Suburb } from "../lib/types";
+import { AUD, AUD0, dmy, fuelOf, resolvedSuburbFee, suburbRate, unitPrice } from "../lib/domain";
+import type { Customer, CustomerSite, Order, OrderItem, PaymentSettings, Product, ProductCategory, Special, Suburb } from "../lib/types";
 import {
   AddressBlock,
   Alert,
@@ -154,6 +154,7 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
   const [specials, setSpecials] = useState<Special[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [itemsByOrder, setItemsByOrder] = useState<Record<string, OrderItem[]>>({});
+  const [paySettings, setPaySettings] = useState<PaymentSettings | null>(null);
 
   const [tab, setTab] = useState<"dashboard" | "orders" | "neworder">("dashboard");
   const [statusFilter, setStatusFilter] = useState("All statuses");
@@ -172,7 +173,7 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
   const [submitting, setSubmitting] = useState(false);
 
   const load = async () => {
-    const [c, st, sub, p, cat, sp, spp, o] = await Promise.all([
+    const [c, st, sub, p, cat, sp, spp, o, pay] = await Promise.all([
       supabase.from("customers").select("*").eq("id", user.id).maybeSingle(),
       supabase.from("customer_sites").select("*").eq("customer_id", user.id),
       supabase.from("suburbs").select("*"),
@@ -181,6 +182,7 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
       supabase.from("specials").select("*"),
       supabase.from("special_products").select("*"),
       supabase.from("orders").select("*").eq("customer_id", user.id).is("deleted_at", null).order("placed_at", { ascending: false }),
+      supabase.from("payment_settings").select("*").maybeSingle(),
     ]);
     const idsBySpecial: Record<string, string[]> = {};
     (spp.data || []).forEach((x: any) => (idsBySpecial[x.special_id] = idsBySpecial[x.special_id] || []).push(x.product_id));
@@ -190,6 +192,7 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
     setProducts((p.data || []) as Product[]);
     setCategories((cat.data || []) as ProductCategory[]);
     setSpecials(((sp.data || []) as Special[]).map((s) => ({ ...s, product_ids: idsBySpecial[s.id] || [] })));
+    setPaySettings((pay.data as PaymentSettings) || null);
     const myOrders = (o.data || []) as Order[];
     setOrders(myOrders);
     if (myOrders.length) {
@@ -235,8 +238,9 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
   const goods = lines.reduce((s, l) => s + l.lineTotal, 0);
   const site = sites.find((s) => s.id === siteChoice) || sites[0] || null;
   const rate = site ? suburbRate(site.suburb_id, suburbs) : null;
-  const fee = method === "delivery" && rate ? rate.fee : 0;
-  const total = goods + fee;
+  const fee = method === "delivery" && site ? resolvedSuburbFee(site.suburb_id, suburbs, paySettings).total : 0;
+  const fuel = method === "delivery" ? fuelOf(paySettings) : 0;
+  const total = goods + fee + fuel;
 
   const addProduct = (id: string) =>
     setCart((c) => {
@@ -248,7 +252,9 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
 
   const orderRows = orders.map((o) => {
     const its = itemsByOrder[o.id] || [];
-    const t = its.reduce((s, i) => s + Number(i.line_total), 0) + (o.method === "delivery" ? Number(o.delivery_fee) || 0 : 0);
+    const t =
+      its.reduce((s, i) => s + Number(i.line_total), 0) +
+      (o.method === "delivery" ? (Number(o.delivery_fee) || 0) + (Number(o.fuel_surcharge) || 0) : 0);
     return {
       number: o.order_number,
       date: dmy(o.placed_at.slice(0, 10)),
@@ -280,6 +286,7 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
       street: method === "delivery" ? site?.street || "" : "Yard collection",
       suburb_id: method === "delivery" ? site?.suburb_id || null : null,
       delivery_fee: fee,
+      fuel_surcharge: fuel,
       fee_source: "suburb",
       delivery_date: iso,
       delivery_window: reqWindow,
@@ -626,6 +633,7 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
                           label: method === "delivery" ? `Delivery — ${site ? suburbName(site.suburb_id) : ""}` : "Pickup — no delivery fee",
                           value: AUD(fee),
                         },
+                        ...(fuel > 0 ? [{ label: "Fuel surcharge", value: AUD(fuel) }] : []),
                         { label: "Includes GST", value: AUD(total / 11) },
                       ]}
                       total={AUD(total)}

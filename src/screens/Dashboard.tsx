@@ -6,7 +6,7 @@ import { Alert, Card, DataTable, Select, StatCard, Tabs } from "../design-system
 
 export default function Dashboard() {
   const ui = useUi();
-  const { orders, orderItems, suburbs, customers, products, specials, trucks, categories } = useApp();
+  const { orders, orderItems, suburbs, customers, products, specials, trucks, categories, paySettings } = useApp();
   const [period, setPeriod] = useState<"today" | "week" | "month">("today");
   const [metric, setMetric] = useState<"qty" | "revenue">("qty");
   const [analyticsCat, setAnalyticsCat] = useState("All categories");
@@ -23,11 +23,11 @@ export default function Dashboard() {
 
   const live = useMemo(() => orders.filter((o) => !o.deleted_at && o.kind !== "master"), [orders]);
   const inRange = live.filter((o) => new Date(o.placed_at) >= rangeStart);
-  const revenue = inRange.reduce((s, o) => s + orderTotal(o, orderItems[o.id] || [], suburbs), 0);
+  const revenue = inRange.reduce((s, o) => s + orderTotal(o, orderItems[o.id] || [], suburbs, paySettings), 0);
   const onRoad = live.filter((o) => o.status === "en_route" || o.status === "loading").length;
   const unpaid = live
     .filter((o) => o.payment_status === "invoiced" || o.payment_status === "pending")
-    .reduce((s, o) => s + orderTotal(o, orderItems[o.id] || [], suburbs), 0);
+    .reduce((s, o) => s + orderTotal(o, orderItems[o.id] || [], suburbs, paySettings), 0);
 
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name || "—";
 
@@ -92,7 +92,7 @@ export default function Dashboard() {
       customer: customers.find((c) => c.id === o.customer_id)?.name || o.walk_in_name || "Walk-in",
       suburb: suburbs.find((s) => s.id === o.suburb_id)?.name || "—",
       truck: trucks.find((t) => t.id === o.truck_id)?.rego || "Unassigned",
-      total: AUD0(orderTotal(o, orderItems[o.id] || [], suburbs)),
+      total: AUD0(orderTotal(o, orderItems[o.id] || [], suburbs, paySettings)),
     }));
 
   /* Needs attention — real conditions, computed live. */

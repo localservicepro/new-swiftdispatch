@@ -19,7 +19,7 @@ import { Card, DataTable, Icon, Input, OrderCard, Select, Tabs, Button } from ".
 
 export default function Board() {
   const ui = useUi();
-  const { orders, orderItems, suburbs, customers, trucks, team } = useApp();
+  const { orders, orderItems, suburbs, customers, trucks, team, paySettings } = useApp();
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [query, setQuery] = useState("");
   const [dragging, setDragging] = useState<{ id: string; from: OrderStatus } | null>(null);
@@ -56,7 +56,7 @@ export default function Board() {
     return hay.includes(q);
   };
 
-  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs);
+  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
 
   let boardCount = 0;
   let boardValue = 0;

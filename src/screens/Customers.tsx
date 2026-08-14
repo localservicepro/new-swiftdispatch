@@ -23,7 +23,7 @@ import {
 export default function Customers() {
   const ui = useUi();
   const app = useApp();
-  const { customers, suburbs, orders, orderItems, statements } = app;
+  const { customers, suburbs, orders, orderItems, statements, paySettings } = app;
 
   const [query, setQuery] = useState("");
   const [entityFilter, setEntityFilter] = useState("Everyone");
@@ -231,7 +231,7 @@ export default function Customers() {
               date: dmy(o.placed_at.slice(0, 10)),
               status: o.status.replace(/_/g, " "),
               payment: o.payment_status,
-              totalNum: orderTotal(o, orderItems[o.id] || [], suburbs),
+              totalNum: orderTotal(o, orderItems[o.id] || [], suburbs, paySettings),
             }))}
             custStatements={custStatements}
             suburbName={suburbName}

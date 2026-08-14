@@ -156,19 +156,48 @@ export const suburbRate = (suburbId: string | null | undefined, suburbs: Suburb[
   };
 };
 
+/* Delivery pricing (Payments › Settings): the fee charged is the suburb rate
+   plus the configured markup. A hand-typed fee is deliberate and taken as-is —
+   markup never silently stacks on top of it. */
+export interface DeliveryPricing {
+  markup_type: "percent" | "fixed";
+  markup_value: number;
+  fuel_surcharge: number;
+}
+
+export const markupOn = (base: number, pay: DeliveryPricing | null | undefined): number => {
+  if (!pay) return 0;
+  const mv = Number(pay.markup_value) || 0;
+  return Math.round((pay.markup_type === "percent" ? (base * mv) / 100 : mv) * 100) / 100;
+};
+
+export const resolvedSuburbFee = (
+  suburbId: string | null | undefined,
+  suburbs: Suburb[],
+  pay: DeliveryPricing | null | undefined
+): { base: number; markup: number; total: number } => {
+  const base = suburbRate(suburbId, suburbs).fee || 0;
+  const markup = markupOn(base, pay);
+  return { base, markup, total: Math.round((base + markup) * 100) / 100 };
+};
+
+export const fuelOf = (pay: DeliveryPricing | null | undefined): number =>
+  pay ? Number(pay.fuel_surcharge) || 0 : 0;
+
 export const feeOf = (
   o: Pick<Order, "fee_source" | "delivery_fee" | "suburb_id">,
-  suburbs: Suburb[]
+  suburbs: Suburb[],
+  pay?: DeliveryPricing | null
 ): number => {
   if (o.fee_source === "manual") return Number(o.delivery_fee) || 0;
-  return suburbRate(o.suburb_id, suburbs).fee || 0;
+  return resolvedSuburbFee(o.suburb_id, suburbs, pay).total;
 };
 
 export const goodsOf = (items: OrderItem[]) => items.reduce((t, i) => t + Number(i.line_total), 0);
 
-export const orderTotal = (o: Order, items: OrderItem[], suburbs: Suburb[]) => {
+export const orderTotal = (o: Order, items: OrderItem[], suburbs: Suburb[], pay?: DeliveryPricing | null) => {
   const goods = goodsOf(items);
-  const fee = o.method === "delivery" ? feeOf(o, suburbs) : 0;
+  const fee = o.method === "delivery" ? feeOf(o, suburbs, pay) + (Number(o.fuel_surcharge) || 0) : 0;
   const adjust =
     o.adjustment_type === "percent"
       ? -goods * (Number(o.adjustment_value) || 0) / 100

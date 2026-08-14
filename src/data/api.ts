@@ -194,6 +194,7 @@ export interface CreateOrderInput {
   deliveryNotes: string;
   adjustmentType: "percent" | "amount" | null;
   adjustmentValue: number | null;
+  fuelSurcharge: number;
 }
 
 export async function createOrder(input: CreateOrderInput): Promise<Order | null> {
@@ -227,6 +228,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
     delivery_notes: input.deliveryNotes || null,
     adjustment_type: input.adjustmentType,
     adjustment_value: input.adjustmentValue,
+    fuel_surcharge: input.method === "delivery" ? input.fuelSurcharge : 0,
     placed_at: new Date().toISOString(),
     created_by: s.user?.id || null,
   };

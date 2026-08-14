@@ -18,7 +18,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
 
 export default function Orders() {
   const ui = useUi();
-  const { orders, orderItems, suburbs, customers } = useApp();
+  const { orders, orderItems, suburbs, customers, paySettings } = useApp();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All statuses");
 
@@ -43,8 +43,8 @@ export default function Orders() {
       const isMaster = o.kind === "master";
       const splits = isMaster ? orders.filter((x) => x.parent_order_id === o.id && !x.deleted_at) : [];
       const total = isMaster
-        ? splits.reduce((s, x) => s + orderTotal(x, orderItems[x.id] || [], suburbs), 0) + goodsOf(orderItems[o.id] || [])
-        : orderTotal(o, orderItems[o.id] || [], suburbs);
+        ? splits.reduce((s, x) => s + orderTotal(x, orderItems[x.id] || [], suburbs, paySettings), 0) + goodsOf(orderItems[o.id] || [])
+        : orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
       return {
         _order: o,
         active:
@@ -61,7 +61,7 @@ export default function Orders() {
         total: AUD(total),
       };
     });
-  }, [orders, orderItems, suburbs, customers, query, statusFilter, ui.lastOpenedOrder]);
+  }, [orders, orderItems, suburbs, customers, paySettings, query, statusFilter, ui.lastOpenedOrder]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

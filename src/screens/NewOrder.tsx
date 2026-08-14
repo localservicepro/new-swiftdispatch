@@ -5,6 +5,8 @@ import {
   AUD,
   AUD0,
   blockedState,
+  fuelOf,
+  resolvedSuburbFee,
   customerBadgeType,
   dmy,
   isoFromDmy,
@@ -40,7 +42,7 @@ const CHIP_HUES = ["var(--brand-primary)", "var(--brand-secondary)", "var(--stat
 export default function NewOrder() {
   const ui = useUi();
   const app = useApp();
-  const { products, categories, specials, customers, suburbs, trucks } = app;
+  const { products, categories, specials, customers, suburbs, trucks, paySettings } = app;
 
   const yard = ui.orderMode === "yardsale";
   const drafts = ui.drafts;
@@ -70,8 +72,10 @@ export default function NewOrder() {
 
   const activeDraft = drafts.some((d) => d.letter === ui.activeDraft) ? ui.activeDraft : drafts[0].letter;
 
+  /* Fee charged = suburb rate + markup (Payments › Settings). A hand-typed fee
+     is taken as-is. Fuel surcharge is its own line, never folded into the fee. */
   const draftFeeOf = (d: DeliveryDraft) =>
-    d.feeSource === "manual" ? Number(d.fee) || 0 : suburbRate(d.suburbId, suburbs).fee || 0;
+    d.feeSource === "manual" ? Number(d.fee) || 0 : resolvedSuburbFee(d.suburbId, suburbs, paySettings).total;
 
   const lines = cart.map((l, index) => {
     const p = product(l.productId)!;
@@ -80,10 +84,11 @@ export default function NewOrder() {
   });
   const goods = lines.reduce((s, l) => s + l.lineTotal, 0);
   const feeTotal = yard || !isDelivery ? 0 : drafts.reduce((s, d) => s + draftFeeOf(d), 0);
+  const fuelTotal = yard || !isDelivery ? 0 : fuelOf(paySettings) * drafts.length;
   const [adjustValue, setAdjustValue] = useState("");
   const adjustNum = parseFloat(adjustValue) || 0;
   const adjust = ui.adjustType === "Percent" ? -goods * (adjustNum / 100) : -adjustNum;
-  const total = goods + feeTotal + adjust;
+  const total = goods + feeTotal + fuelTotal + adjust;
 
   const setCart = (next: CartLine[]) => ui.set({ cart: next });
   const setDrafts = (next: DeliveryDraft[]) => ui.set({ drafts: next });
@@ -214,6 +219,11 @@ export default function NewOrder() {
       });
     });
   }
+  if (fuelTotal > 0)
+    summaryLines.push({
+      label: "Fuel surcharge" + (drafts.length > 1 ? ` — ${drafts.length} deliveries` : ""),
+      value: AUD(fuelTotal),
+    });
   if (adjustNum > 0)
     summaryLines.push({
       label: ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}%` : "Adjustment — flat",
@@ -242,6 +252,7 @@ export default function NewOrder() {
       deliveryNotes: ui.deliveryNotesDraft,
       adjustmentType: adjustNum > 0 ? (ui.adjustType === "Percent" ? "percent" : "amount") : null,
       adjustmentValue: adjustNum > 0 ? adjustNum : null,
+      fuelSurcharge: yard || !isDelivery ? 0 : fuelOf(paySettings),
     });
     setCreating(false);
     if (order) {
@@ -776,7 +787,7 @@ export default function NewOrder() {
                 )}
                 <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ flex: 1, minWidth: 100 }}>
-                    <Input size="sm" label="Adjustment" value={adjustValue} onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="" />
+                    <Input size="sm" label="Adjustment" aria-label="Adjustment value" value={adjustValue} onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))} />
                   </div>
                   <Select
                     size="sm"
@@ -794,10 +805,20 @@ export default function NewOrder() {
                       {lines.length}
                     </span>
                   </div>
+                  {adjustNum > 0 && (
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+                      <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
+                        {ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}%` : "Adjustment — flat"}
+                      </span>
+                      <span className="tabular" style={{ fontSize: 12, fontWeight: 500, color: "var(--feedback-success)" }}>
+                        −{AUD(Math.abs(adjust))}
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
                     <span style={{ fontSize: 18, color: "var(--text-primary)" }}>Subtotal</span>
                     <span className="tabular" style={{ fontSize: 18, fontWeight: 600, color: "var(--text-primary)" }}>
-                      {AUD(goods)}
+                      {AUD(goods + adjust)}
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
@@ -996,7 +1017,10 @@ export default function NewOrder() {
                                     : rate.inactive
                                       ? `${suburbNm} is switched off in Suburbs, so no rate applies. Turn it back on or pick another suburb.`
                                       : d.feeSource === "suburb"
-                                        ? `From the ${suburbNm} suburb rate (${AUD(rate.fee)}).`
+                                        ? `From the ${suburbNm} rate (${AUD(rate.fee)})` +
+                                          (resolvedSuburbFee(d.suburbId, suburbs, paySettings).markup > 0
+                                            ? ` + ${AUD(resolvedSuburbFee(d.suburbId, suburbs, paySettings).markup)} markup.`
+                                            : ".")
                                         : `Set by hand — no longer tracking the ${suburbNm} rate of ${AUD(rate.fee)}.`}
                                 </div>
                               </>
@@ -1152,6 +1176,25 @@ export default function NewOrder() {
                         Records how this transaction settled — the billing relationship above comes from the customer
                         record.
                       </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 100 }}>
+                        <Input
+                          size="sm"
+                          label="Adjustment"
+                          aria-label="Adjustment value"
+                          value={adjustValue}
+                          onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))}
+                        />
+                      </div>
+                      <Select
+                        size="sm"
+                        label="Type"
+                        options={["Percent", "Dollars"]}
+                        value={ui.adjustType}
+                        onChange={(e: any) => ui.set({ adjustType: e.target.value })}
+                        style={{ width: 118, flexShrink: 0 }}
+                      />
                     </div>
                     <Input size="sm" label="PO number" value={ui.poNumber} onChange={(e: any) => ui.set({ poNumber: e.target.value })} placeholder="Customer's PO reference" />
                     <Textarea
