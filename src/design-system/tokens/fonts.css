@@ -1,0 +1,10 @@
+/* SwiftDispatch Pro webfonts.
+   Inter is the brand face (Local Service Pro marketing + product).
+   JetBrains Mono is a SUBSTITUTION for the product's generic `font-mono` stack
+   (order numbers, account numbers, PINs, SKUs) — no binary was supplied. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root{
+  --font-sans:"Inter","Helvetica Neue",Helvetica,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}

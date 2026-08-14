@@ -1,0 +1,25 @@
+:root{
+  --space-0:0;
+  --space-1:2px;
+  --space-2:4px;
+  --space-3:6px;
+  --space-4:8px;
+  --space-5:12px;
+  --space-6:16px;
+  --space-7:20px;
+  --space-8:24px;
+  --space-9:32px;
+  --space-10:40px;
+  --space-11:48px;
+  --space-12:64px;
+  --space-13:80px;
+
+  /* density presets — the four surfaces do not share one density */
+  --pad-dense:8px 10px;      /* admin table rows, dispatch cards */
+  --pad-default:12px 16px;   /* standard cards, form fields */
+  --pad-comfy:16px 20px;     /* customer portal, storefront */
+  --pad-touch:18px 20px;     /* driver portal */
+  --gap-dense:6px;
+  --gap-default:12px;
+  --gap-section:24px;
+}

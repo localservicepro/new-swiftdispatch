@@ -1,0 +1,8 @@
+html{color-scheme:dark}
+body{margin:0;background:var(--bg-app);color:var(--text-body);font-family:var(--font-body);font-size:var(--text-base);line-height:var(--leading-normal);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+*{box-sizing:border-box}
+a{color:var(--text-accent);text-decoration:none;transition:color var(--duration-fast) var(--ease-standard)}
+a:hover{color:var(--blue-300)}
+::selection{background:rgba(59,130,246,.32);color:var(--text-primary)}
+:focus-visible{outline:none;box-shadow:var(--ring-focus)}
+.tabular{font-variant-numeric:tabular-nums}

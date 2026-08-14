@@ -1,0 +1,13 @@
+:root{
+  --sidebar-width:248px;
+  --sidebar-width-collapsed:60px;
+  --topbar-height:56px;
+  --admin-row-height:44px;
+  --dispatch-column-width:320px;   /* PipelineColumn min-w-[320px] */
+  --content-max:1400px;            /* tailwind container 2xl */
+  --portal-max:1100px;
+  --storefront-max:1180px;
+  --driver-max:480px;              /* max-w-md driver shell */
+  --touch-target-min:56px;         /* driver portal, gloved outdoor use */
+  --touch-target-admin:36px;
+}
