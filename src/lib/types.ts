@@ -209,6 +209,8 @@ export interface Order {
   adjustment_value: number | null;
   processed_at: string | null;
   overrides: Record<string, boolean>;
+  pod_photo_url: string | null;
+  pod_at: string | null;
   deleted_at: string | null;
 }
 

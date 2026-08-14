@@ -33,6 +33,7 @@ import {
   Tabs,
   Textarea,
 } from "../design-system/components.js";
+import AddressSearch from "./AddressSearch";
 
 const CHIP_HUES = ["var(--brand-primary)", "var(--brand-secondary)", "var(--status-loading)", "var(--status-enroute)"];
 
@@ -944,7 +945,25 @@ export default function NewOrder() {
                                     }}
                                   />
                                 )}
-                                <Input size="sm" label="Street" value={d.street} onChange={(e: any) => patchDraft(d.letter, { street: e.target.value })} />
+                                <AddressSearch
+                                  street={d.street}
+                                  suburbName={suburbNm}
+                                  suburbs={suburbs}
+                                  onStreet={(v) => patchDraft(d.letter, { street: v })}
+                                  onResolved={({ street: st, suburb, suburbName: nm }) => {
+                                    if (suburb) {
+                                      const r = suburbRate(suburb.id, suburbs);
+                                      patchDraft(d.letter, { street: st, suburbId: suburb.id, fee: r.fee, feeSource: "suburb" });
+                                    } else {
+                                      patchDraft(d.letter, { street: st, suburbId: null, fee: 0, feeSource: "suburb" });
+                                      app.toast({
+                                        tone: "warning",
+                                        title: `${nm} isn't in your Suburbs list`,
+                                        description: "Add it under Operate › Suburbs with a delivery rate — the fee always comes from the suburb, so this order stays blocked until then.",
+                                      });
+                                    }
+                                  }}
+                                />
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 6 }}>
                                   <Select
                                     size="sm"

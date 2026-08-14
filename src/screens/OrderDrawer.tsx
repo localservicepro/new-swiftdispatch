@@ -40,6 +40,7 @@ import {
   Tabs,
   Textarea,
 } from "../design-system/components.js";
+import AddressSearch from "./AddressSearch";
 
 export default function OrderDrawer() {
   const ui = useUi();
@@ -564,11 +565,19 @@ export default function OrderDrawer() {
                             }
                             onChange={() => {}}
                           />
-                          <Input
-                            size="sm"
-                            label="Street"
-                            value={editTarget.street || ""}
-                            onChange={(e: any) => patchOrder(editTarget.id, { street: e.target.value })}
+                          <AddressSearch
+                            street={editTarget.street || ""}
+                            suburbName={suburbName(editTarget.suburb_id)}
+                            suburbs={suburbs}
+                            onStreet={(v) => patchOrder(editTarget.id, { street: v })}
+                            onResolved={({ street, suburb }) => {
+                              if (suburb) {
+                                const r = suburbRate(suburb.id, suburbs);
+                                patchOrder(editTarget.id, { street, suburb_id: suburb.id, delivery_fee: r.fee, fee_source: "suburb" });
+                              } else {
+                                patchOrder(editTarget.id, { street, suburb_id: null });
+                              }
+                            }}
                           />
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8 }}>
                             <Select
