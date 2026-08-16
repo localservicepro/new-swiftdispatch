@@ -1,13 +1,17 @@
 import React, { useState } from "react";
 import { useApp } from "../store/store";
+import { useUi } from "../store/ui";
 import { AUD, AUD0, dmy } from "../lib/domain";
-import { PAYMENT_TYPE_LABEL } from "../lib/types";
+import { PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
 import { patchPaySettings } from "../data/api";
+import { pushContextFor, pushOrdersToMyob } from "../data/myob";
+import { pushBlockers } from "../lib/myob";
 import { Alert, Badge, Button, Card, DataTable, Input, Select, StatCard, Switch, Tabs } from "../design-system/components.js";
 
 export default function Payments() {
   const app = useApp();
-  const { payments, orders, customers, paySettings, statements } = app;
+  const ui = useUi();
+  const { payments, orders, customers, paySettings, statements, myob } = app;
   const [tab, setTab] = useState<"ledger" | "settings">("ledger");
   const [draft, setDraft] = useState<Record<string, any> | null>(null);
 
@@ -109,16 +113,7 @@ export default function Payments() {
                   <div style={{ fontSize: 11, color: "var(--text-faint)" }}>{statements.length} statements issued so far.</div>
                 </div>
               </Card>
-              <Card title="MYOB" subtitle="Batch invoice push" padding="default">
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                    {payments.filter((x) => x.status === "invoiced").length} invoices queued for the next batch.
-                  </div>
-                  <Button variant="secondary" size="md" iconLeft="external-link" fullWidth>
-                    Push batch to MYOB
-                  </Button>
-                </div>
-              </Card>
+              <MyobBatchCard />
             </div>
           </div>
         </div>
@@ -211,11 +206,17 @@ export default function Payments() {
 
           <Card title="MYOB AccountRight" padding="default">
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <Badge tone="success" icon="badge-check">
-                Connected
+              <Badge tone={myob?.enabled ? "success" : "neutral"} icon={myob?.enabled ? "badge-check" : "circle"}>
+                {myob?.enabled ? "On" : "Off"}
               </Badge>
-              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>invoices push at 6:00 AM daily</span>
-              <Button variant="ghost" size="sm" iconLeft="external-link">
+              <span style={{ flex: "1 1 200px", minWidth: 0, fontSize: 13, color: "var(--text-muted)" }}>
+                {myob?.enabled
+                  ? `Sales go across as ${myob.push_as === "order" ? "orders" : "invoices"} on the ${myob.sale_layout} layout${
+                      myob.auto_push ? ", automatically once delivered" : ", when you push them"
+                    }.`
+                  : "Switch it on in Settings › Integrations to stop re-keying deliveries."}
+              </span>
+              <Button variant="ghost" size="sm" iconLeft="external-link" onClick={() => ui.navigateTo("settings")}>
                 Open integration settings
               </Button>
             </div>
@@ -247,5 +248,63 @@ export default function Payments() {
         </div>
       )}
     </div>
+  );
+}
+
+/* Batch push: every delivered order that MYOB hasn't seen yet. Orders that
+   can't go (no coding, nothing on them) are counted separately rather than
+   quietly dropped from the batch — a batch that says "12 sent" while silently
+   skipping four is how re-keying creeps back in. */
+function MyobBatchCard() {
+  const app = useApp();
+  const ui = useUi();
+  const { orders, myob } = app;
+  const [busy, setBusy] = useState(false);
+
+  const delivered = orders.filter(
+    (o: Order) => !o.deleted_at && o.kind !== "master" && o.status === "delivered" && !o.myob_pushed_at
+  );
+  const contexts = delivered.map(pushContextFor).filter(Boolean) as NonNullable<ReturnType<typeof pushContextFor>>[];
+  const ready = contexts.filter((c) => pushBlockers(c).length === 0);
+  const held = contexts.length - ready.length;
+  const off = !myob?.enabled;
+
+  return (
+    <Card title="MYOB" subtitle="Batch push" padding="default">
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 13, color: "var(--text-muted)", textWrap: "pretty" as any }}>
+          {off
+            ? "The MYOB connection is switched off."
+            : `${ready.length} delivered ${ready.length === 1 ? "order is" : "orders are"} ready to go across.`}
+        </div>
+        {!off && held > 0 && (
+          <div style={{ fontSize: 11, color: "var(--attention)", textWrap: "pretty" as any }}>
+            {held} held back — {pushBlockers(contexts.find((c) => pushBlockers(c).length > 0)!)[0]}
+          </div>
+        )}
+        <Button
+          variant="secondary"
+          size="md"
+          iconLeft="external-link"
+          fullWidth
+          disabled={busy || off || !ready.length}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await pushOrdersToMyob(ready);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Sending…" : off ? "Switch MYOB on first" : `Push ${ready.length || ""} to MYOB`.trim()}
+        </Button>
+        {off && (
+          <Button variant="ghost" size="sm" iconLeft="settings" fullWidth onClick={() => ui.navigateTo("settings")}>
+            Open MYOB settings
+          </Button>
+        )}
+      </div>
+    </Card>
   );
 }

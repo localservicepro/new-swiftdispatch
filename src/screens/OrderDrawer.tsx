@@ -43,6 +43,7 @@ import {
   Textarea,
 } from "../design-system/components.js";
 import AddressSearch from "./AddressSearch";
+import MyobPushButton from "./MyobPushButton";
 
 export default function OrderDrawer() {
   const ui = useUi();
@@ -235,6 +236,7 @@ export default function OrderDrawer() {
               <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
                 Run sheet
               </Button>
+              {!isMaster && sel && <MyobPushButton order={sel} />}
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>

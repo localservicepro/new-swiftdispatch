@@ -163,6 +163,7 @@ export interface Customer {
   billing_suburb_id: string | null;
   portal_enabled: boolean;
   portal_pin: string | null;
+  myob_uid: string | null;
   contacts: CustomerContact[];
   sites: CustomerSite[];
 }
@@ -212,6 +213,11 @@ export interface Order {
   fuel_surcharge: number;
   pod_photo_url: string | null;
   pod_at: string | null;
+  myob_uid: string | null;
+  myob_doc_type: "order" | "invoice" | null;
+  myob_number: string | null;
+  myob_pushed_at: string | null;
+  myob_error: string | null;
   deleted_at: string | null;
 }
 

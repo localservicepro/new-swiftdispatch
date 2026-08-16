@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabase";
+import type { MyobSettings } from "../lib/myob";
 import type {
   BusinessSettings,
   Customer,
@@ -75,6 +76,7 @@ interface AppState {
   paySettings: PaymentSettings | null;
   integrations: IntegrationSettings[];
   emails: EmailSetting[];
+  myob: MyobSettings | null;
 
   toasts: ToastMsg[];
 
@@ -125,6 +127,7 @@ export const useApp = create<AppState>((set, get) => ({
   paySettings: null,
   integrations: [],
   emails: [],
+  myob: null,
 
   toasts: [],
 
@@ -174,6 +177,7 @@ export const useApp = create<AppState>((set, get) => ({
         paySettings,
         integrations,
         emails,
+        myob,
       ] = await Promise.all([
         supabase.from("suburbs").select("*").order("name"),
         supabase.from("product_categories").select("*").order("sort_order"),
@@ -194,6 +198,7 @@ export const useApp = create<AppState>((set, get) => ({
         supabase.from("payment_settings").select("*").maybeSingle(),
         supabase.from("integration_settings").select("*"),
         supabase.from("email_settings").select("*"),
+        supabase.from("myob_settings").select("*").maybeSingle(),
       ]);
 
       const firstError = [suburbs, categories, products, orders].find((r) => r.error)?.error;
@@ -249,6 +254,7 @@ export const useApp = create<AppState>((set, get) => ({
         paySettings: (paySettings.data || null) as PaymentSettings | null,
         integrations: (integrations.data || []) as IntegrationSettings[],
         emails: (emails.data || []) as EmailSetting[],
+        myob: (myob.data || null) as MyobSettings | null,
         booted: true,
       });
     } catch (e: any) {

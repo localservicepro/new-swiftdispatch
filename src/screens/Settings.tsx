@@ -3,23 +3,11 @@ import { useApp } from "../store/store";
 import { useUi } from "../store/ui";
 import { patchBusiness, patchEmailSetting, patchIntegration } from "../data/api";
 import { Alert, Badge, Button, Card, Icon, Input, Switch, Tabs, Textarea } from "../design-system/components.js";
+import MyobSettings from "./MyobSettings";
 
+/* MYOB is not a generic connector — it has its own panel below, because the
+   office configures the coding and the line wording, not just an API key. */
 const INTEGRATION_META = [
-  {
-    key: "myob",
-    name: "MYOB",
-    icon: "file-text",
-    iconColor: "var(--brand-secondary)",
-    what: "Pushes invoices and credit notes to your ledger",
-    accountLabel: "MYOB file",
-    connectHint: "Sign in to MYOB to push invoices instead of re-keying them.",
-    syncLabel: "Batch invoice push",
-    syncHint: "Every invoiced order goes across on the next run.",
-    fields: [
-      { label: "Company file", key: "field_a" },
-      { label: "Push schedule", key: "field_b" },
-    ],
-  },
   {
     key: "mycrmsim",
     name: "MyCRMSim",
@@ -64,7 +52,7 @@ const EMAIL_META: Record<string, { label: string; hint: string }> = {
 
 export default function Settings() {
   const ui = useUi();
-  const { business, integrations, emails, user } = useApp();
+  const { business, integrations, emails, user, myob } = useApp();
   const [tab, setTab] = useState<"business" | "integrations" | "email">("business");
   const [saved, setSaved] = useState("");
   const [biz, setBiz] = useState<Record<string, string> | null>(null);
@@ -73,7 +61,8 @@ export default function Settings() {
   const b = { ...business, ...(biz || {}) } as any;
   const setB = (patch: Record<string, string>) => setBiz((d) => ({ ...(d || {}), ...patch }));
 
-  const connectedCount = integrations.filter((i) => i.connected).length;
+  const connectedCount =
+    integrations.filter((i) => i.key !== "myob" && i.connected).length + (myob?.enabled ? 1 : 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 1100 }}>
@@ -176,6 +165,7 @@ export default function Settings() {
 
       {tab === "integrations" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <MyobSettings onSaved={setSaved} />
           {INTEGRATION_META.map((meta) => {
             const s = integrations.find((i) => i.key === meta.key);
             if (!s) return null;

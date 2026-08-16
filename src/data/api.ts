@@ -4,6 +4,8 @@
 import { supabase } from "../lib/supabase";
 import { persist, useApp, type DeliveryDraft, type CartLine } from "../store/store";
 import { derivePaymentType, feeOf, unitFor, roundToStep, unitPrice } from "../lib/domain";
+import { pushBlockers } from "../lib/myob";
+import { pushContextFor, pushOrdersToMyob } from "./myob";
 import type {
   Customer,
   CustomerContact,
@@ -103,6 +105,20 @@ export function copyToAllSplits(masterId: string, what: "address" | "schedule") 
 export function moveOrder(id: string, to: OrderStatus) {
   patchOrder(id, { status: to });
   logActivity("order", id, "status:" + to);
+  if (to === "delivered") void autoPushToMyob(id);
+}
+
+/* Settings › Integrations can have a delivered order raise its sale straight
+   away. It stays silent when it can't — a half-configured MYOB should not throw
+   an error at whoever just marked a truck back in. */
+async function autoPushToMyob(orderId: string) {
+  const s = S();
+  if (!s.myob?.enabled || !s.myob.auto_push) return;
+  const order = s.orders.find((o) => o.id === orderId);
+  if (!order || order.myob_pushed_at) return;
+  const ctx = pushContextFor(order);
+  if (!ctx || pushBlockers(ctx).length) return;
+  await pushOrdersToMyob([ctx]);
 }
 
 export function assignCrew(id: string, truckId: string | null, driverId: string | null) {
