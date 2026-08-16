@@ -6,6 +6,8 @@ import { persist, useApp, type DeliveryDraft, type CartLine } from "../store/sto
 import { derivePaymentType, feeOf, unitFor, roundToStep, unitPrice } from "../lib/domain";
 import { pushBlockers, readyForMyob } from "../lib/myob";
 import { pushContextFor, pushOrdersToMyob } from "./myob";
+import { invoiceHtml } from "../print/invoice";
+import { printDocument } from "../print/print";
 import type {
   Customer,
   CustomerContact,
@@ -352,6 +354,26 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
 export function markProcessed(id: string) {
   const now = new Date().toISOString();
   patchOrder(id, { processed_at: now, processed_by: S().user?.id || null } as Partial<Order>);
+}
+
+/* Print receipt: open the browser's print dialogue on the tax invoice, the same
+   one Ctrl+P shows, and record that the order has been printed. */
+export function printReceipt(id: string) {
+  const s = S();
+  const order = s.orders.find((o) => o.id === id);
+  if (!order) return;
+  printDocument(
+    invoiceHtml({
+      order,
+      items: s.orderItems[id] || [],
+      products: s.products,
+      suburbs: s.suburbs,
+      customer: s.customers.find((c) => c.id === order.customer_id),
+      business: s.business,
+      paySettings: s.paySettings,
+    })
+  );
+  markProcessed(id);
 }
 
 /* ---------- customers ---------- */

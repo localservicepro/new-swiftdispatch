@@ -24,6 +24,7 @@ import {
   moveOrder,
   patchOrder,
   patchSplit,
+  printReceipt,
   removeOrderItem,
   resetSplitToMaster,
   setOrderItemQty,
@@ -231,7 +232,7 @@ export default function OrderDrawer() {
 
             <div style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Button variant="secondary" size="sm" iconLeft="printer" onClick={() => markProcessed(focus.id)}>
+                <Button variant="secondary" size="sm" iconLeft="printer" onClick={() => printReceipt(focus.id)}>
                   Print receipt
                 </Button>
                 <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
@@ -424,7 +425,7 @@ export default function OrderDrawer() {
                           </div>
 
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <Button variant="ghost" size="sm" iconLeft="printer" onClick={() => markProcessed(s.id)}>
+                            <Button variant="ghost" size="sm" iconLeft="printer" onClick={() => printReceipt(s.id)}>
                               Print this split
                             </Button>
                             <Button variant="ghost" size="sm" iconLeft="repeat" onClick={() => resetSplitToMaster(s.id)}>
