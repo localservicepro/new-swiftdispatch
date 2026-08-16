@@ -3,10 +3,11 @@
 
 import { supabase } from "../lib/supabase";
 import { persist, useApp, type DeliveryDraft, type CartLine } from "../store/store";
-import { derivePaymentType, feeOf, unitFor, roundToStep, unitPrice } from "../lib/domain";
+import { derivePaymentType, feeOf, orderTotal, unitFor, roundToStep, unitPrice } from "../lib/domain";
 import { pushBlockers, readyForMyob } from "../lib/myob";
 import { pushContextFor, pushOrdersToMyob } from "./myob";
 import { invoiceDocument, invoiceSheet, invoiceTitle } from "../print/invoice";
+import { statementHtml, type StatementAgeing, type StatementLine } from "../print/statement";
 import { printDocument } from "../print/print";
 import type {
   Customer,
@@ -414,6 +415,130 @@ export function printReceipt(id: string, mode: PrintMode = "separate") {
   if (splits.length) markProcessed(order.id);
 }
 
+/* ---------- statements ---------- */
+
+const monthEnd = (start: Date) => new Date(start.getFullYear(), start.getMonth() + 1, 0);
+const isoOf = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+export const monthLabel = (iso: string) =>
+  new Date(iso + "T00:00:00").toLocaleDateString("en-AU", { month: "long", year: "numeric" });
+
+/* The last 12 months, newest first, keyed by the first of the month. */
+export function statementMonths(): { value: string; label: string }[] {
+  const now = new Date();
+  return Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const iso = isoOf(d);
+    return { value: iso, label: monthLabel(iso) };
+  });
+}
+
+/* An order's date for statement purposes: when the goods moved, falling back to
+   when it was booked. */
+const orderDate = (o: Order) => o.delivery_date || o.placed_at.slice(0, 10);
+
+/* Ageing runs on every unpaid order on the account, not just this period's —
+   that is what makes the summary an account summary rather than a repeat of the
+   ledger above it. */
+function ageingFor(customerId: string, asAtIso: string): StatementAgeing {
+  const s = S();
+  const asAt = new Date(asAtIso + "T00:00:00").getTime();
+  const buckets = { current: 0, over30: 0, over60: 0, over90: 0, total: 0 };
+  s.orders
+    .filter(
+      (o) =>
+        o.customer_id === customerId &&
+        !o.deleted_at &&
+        o.kind !== "master" &&
+        o.status !== "cancelled" &&
+        o.payment_status !== "paid"
+    )
+    .forEach((o) => {
+      const amount = orderTotal(o, s.orderItems[o.id] || [], s.suburbs, s.paySettings);
+      if (amount <= 0) return;
+      const days = Math.floor((asAt - new Date(orderDate(o) + "T00:00:00").getTime()) / 86400000);
+      if (days > 90) buckets.over90 += amount;
+      else if (days > 60) buckets.over60 += amount;
+      else if (days > 30) buckets.over30 += amount;
+      else buckets.current += amount;
+      buckets.total += amount;
+    });
+  const round = (n: number) => Math.round(n * 100) / 100;
+  return {
+    current: round(buckets.current),
+    over30: round(buckets.over30),
+    over60: round(buckets.over60),
+    over90: round(buckets.over90),
+    total: round(buckets.total),
+  };
+}
+
+export function statementLines(customerId: string, startIso: string, endIso: string, scope: "all" | "delivered") {
+  const s = S();
+  const suburbName = (id: string | null) => s.suburbs.find((x) => x.id === id)?.name || "";
+  const inPeriod = (iso: string) => iso >= startIso && iso <= endIso;
+
+  const charges: StatementLine[] = s.orders
+    .filter(
+      (o) =>
+        o.customer_id === customerId &&
+        !o.deleted_at &&
+        o.kind !== "master" &&
+        o.status !== "cancelled" &&
+        (scope === "all" || o.status === "delivered") &&
+        inPeriod(orderDate(o))
+    )
+    .map((o) => ({
+      dateIso: orderDate(o),
+      ref: o.order_number,
+      charge: orderTotal(o, s.orderItems[o.id] || [], s.suburbs, s.paySettings),
+      payment: 0,
+      address:
+        o.method === "delivery"
+          ? [o.street, suburbName(o.suburb_id)].filter(Boolean).join(", ") || null
+          : "Yard collection",
+    }));
+
+  const received: StatementLine[] = s.payments
+    .filter((p) => p.customer_id === customerId && p.status === "paid" && p.paid_at && inPeriod(p.paid_at.slice(0, 10)))
+    .map((p) => ({
+      dateIso: (p.paid_at as string).slice(0, 10),
+      ref: p.reference || s.orders.find((o) => o.id === p.order_id)?.order_number || "Payment",
+      charge: 0,
+      payment: Number(p.amount) || 0,
+      address: null,
+    }));
+
+  return [...charges, ...received].sort((a, b) => a.dateIso.localeCompare(b.dateIso) || a.ref.localeCompare(b.ref));
+}
+
+/* Print the account statement for one month. Nothing is recorded — printing a
+   statement to look at it should not litter the customer's history. */
+export function printStatement(customerId: string, startIso: string, scope: "all" | "delivered" = "all") {
+  const s = S();
+  const customer = s.customers.find((c) => c.id === customerId);
+  if (!customer) return;
+  const start = new Date(startIso + "T00:00:00");
+  const endIso = isoOf(monthEnd(start));
+  const today = isoOf(new Date());
+
+  const suburb = s.suburbs.find((x) => x.id === customer.billing_suburb_id);
+  printDocument(
+    statementHtml({
+      customer,
+      customerAddress: [customer.billing_street, suburb?.name].filter(Boolean).join(", "),
+      business: s.business,
+      periodLabel: monthLabel(startIso),
+      generatedIso: today,
+      lines: statementLines(customerId, startIso, endIso, scope),
+      /* As at today, not the period end: the office posts these now and wants
+         to know what is owed now. */
+      ageing: ageingFor(customerId, today),
+    })
+  );
+}
+
 /* ---------- customers ---------- */
 
 export function patchCustomer(id: string, patch: Partial<Customer>) {
@@ -698,23 +823,25 @@ export function patchEmailSetting(key: string, enabled: boolean) {
 
 /* ---------- statements / activity ---------- */
 
-export async function generateStatement(customer: Customer, month: "this" | "last", scope: "all" | "delivered") {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const start = month === "this" ? new Date(y, m, 1) : new Date(m === 0 ? y - 1 : y, m === 0 ? 11 : m - 1, 1);
-  const end =
-    month === "this" ? now : new Date(start.getFullYear(), start.getMonth() + 1, 0);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+/* startIso is the first of the chosen month — the office picks which month
+   rather than being limited to this one and last. */
+export async function generateStatement(customer: Customer, startIso: string, scope: "all" | "delivered") {
+  const start = new Date(startIso + "T00:00:00");
+  const end = monthEnd(start);
+  const endIso = isoOf(end);
+  const lines = statementLines(customer.id, startIso, endIso, scope);
+  const amount = Math.round(lines.reduce((t, l) => t + l.charge - l.payment, 0) * 100) / 100;
   const ref = `STM-${customer.account_number}-${String(start.getMonth() + 1).padStart(2, "0")}`;
   const row = {
     customer_id: customer.id,
     ref,
-    period_start: iso(start),
-    period_end: iso(end),
+    period_start: startIso,
+    period_end: endIso,
     scope,
     status: "pending",
-    amount: customer.balance,
+    /* What the month actually came to, not the customer's running balance —
+       the printed statement and the recorded row have to agree. */
+    amount,
   };
   const { data, error } = await supabase.from("statements").insert(row).select("*").single();
   if (error)

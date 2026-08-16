@@ -3,7 +3,19 @@ import { useApp } from "../store/store";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
 import type { Customer } from "../lib/types";
-import { addContact, addSite, createCustomer, generateStatement, genPin, patchCustomer, removeContact } from "../data/api";
+import {
+  addContact,
+  addSite,
+  createCustomer,
+  generateStatement,
+  genPin,
+  monthLabel,
+  patchCustomer,
+  printStatement,
+  removeContact,
+  statementLines,
+  statementMonths,
+} from "../data/api";
 import {
   AddressBlock,
   Alert,
@@ -30,7 +42,7 @@ export default function Customers() {
   const [billingFilter, setBillingFilter] = useState("All settlement");
   const [selected, setSelected] = useState<string[]>([]);
   const [newCustOpen, setNewCustOpen] = useState(false);
-  const [statementModal, setStatementModal] = useState<{ month: "this" | "last"; scope: "all" | "delivered" } | null>(null);
+  const [statementModal, setStatementModal] = useState<{ month: string; scope: "all" | "delivered" } | null>(null);
   const [smsSent, setSmsSent] = useState<Record<string, string>>({});
 
   const cust = ui.custId ? customers.find((c) => c.id === ui.custId) || null : null;
@@ -235,7 +247,7 @@ export default function Customers() {
             }))}
             custStatements={custStatements}
             suburbName={suburbName}
-            openStatement={() => setStatementModal({ month: "this", scope: "all" })}
+            openStatement={() => setStatementModal({ month: statementMonths()[0].value, scope: "all" })}
             smsSent={smsSent[cust.id]}
             sendSms={() => setSmsSent((prev) => ({ ...prev, [cust.id]: "Sent to the contact's mobile just now." }))}
             onNewOrder={() => ui.startOrder(cust.id)}
@@ -251,8 +263,12 @@ export default function Customers() {
           cust={cust}
           state={statementModal}
           setState={setStatementModal}
-          onConfirm={() => {
+          onGenerate={() => {
             void generateStatement(cust, statementModal.month, statementModal.scope);
+            setStatementModal(null);
+          }}
+          onPrint={() => {
+            printStatement(cust.id, statementModal.month, statementModal.scope);
             setStatementModal(null);
           }}
         />
@@ -726,7 +742,12 @@ function CustomerDrawer(props: {
                         <span className="tabular" style={{ marginLeft: "auto", fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
                           {AUD(Number(s.amount))}
                         </span>
-                        <Button variant="ghost" size="sm" iconLeft="printer" onClick={() => window.print()}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconLeft="printer"
+                          onClick={() => printStatement(cust.id, s.period_start.slice(0, 8) + "01", s.scope as "all" | "delivered")}
+                        >
                           Print
                         </Button>
                       </div>
@@ -903,23 +924,27 @@ function StatementModal({
   cust,
   state,
   setState,
-  onConfirm,
+  onGenerate,
+  onPrint,
 }: {
   cust: Customer;
-  state: { month: "this" | "last"; scope: "all" | "delivered" };
-  setState: (s: { month: "this" | "last"; scope: "all" | "delivered" } | null) => void;
-  onConfirm: () => void;
+  state: { month: string; scope: "all" | "delivered" };
+  setState: (s: { month: string; scope: "all" | "delivered" } | null) => void;
+  onGenerate: () => void;
+  onPrint: () => void;
 }) {
-  const now = new Date();
-  const fmt = (y: number, m: number) => new Date(y, m, 1).toLocaleDateString("en-AU", { month: "short", year: "numeric" });
-  const periodLabel =
-    state.month === "this"
-      ? `1–${now.getDate()} ${fmt(now.getFullYear(), now.getMonth())}`
-      : (() => {
-          const lm = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
-          const ly = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-          return `1–${new Date(ly, lm + 1, 0).getDate()} ${fmt(ly, lm)}`;
-        })();
+  const months = statementMonths();
+  const periodLabel = monthLabel(state.month);
+  const lineCount = statementLines(
+    cust.id,
+    state.month,
+    (() => {
+      const d = new Date(state.month + "T00:00:00");
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+    })(),
+    state.scope
+  ).length;
 
   return (
     <div
@@ -938,15 +963,12 @@ function StatementModal({
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
-            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".09em", color: "var(--text-faint)", marginBottom: 6 }}>Period</div>
-            <Tabs
-              items={[
-                { id: "this", label: "This month" },
-                { id: "last", label: "Last month" },
-              ]}
-              activeId={state.month}
-              onSelect={(id: string) => setState({ ...state, month: id as any })}
-              variant="segmented"
+            <Select
+              size="sm"
+              label="Month"
+              options={months}
+              value={state.month}
+              onChange={(e: any) => setState({ ...state, month: e.target.value })}
             />
           </div>
           <div>
@@ -962,15 +984,19 @@ function StatementModal({
             />
           </div>
           <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
-            {periodLabel} — {state.scope === "delivered" ? "delivered orders only" : "all orders"}.
+            {periodLabel} — {state.scope === "delivered" ? "delivered orders only" : "all orders"}.{" "}
+            {lineCount ? `${lineCount} ${lineCount === 1 ? "entry" : "entries"} on the statement.` : "Nothing on the account that month."}
           </div>
         </div>
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="ghost" size="md" onClick={() => setState(null)}>
             Cancel
           </Button>
-          <Button variant="primary" size="md" iconLeft="file-text" onClick={onConfirm}>
-            Generate statement
+          <Button variant="secondary" size="md" iconLeft="file-text" onClick={onGenerate}>
+            Generate
+          </Button>
+          <Button variant="primary" size="md" iconLeft="printer" onClick={onPrint}>
+            Print statement
           </Button>
         </div>
       </div>

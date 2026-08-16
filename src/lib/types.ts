@@ -256,6 +256,13 @@ export interface BusinessSettings {
   doc_format: string;
   master_prefix: string;
   print_delivery_notes: boolean;
+  /* Printed at the foot of a statement so customers know where to pay. */
+  bank_name: string | null;
+  bank_account_name: string | null;
+  bank_bsb: string | null;
+  bank_account_no: string | null;
+  payment_reference_note: string | null;
+  card_surcharge_note: string | null;
 }
 
 export interface PaymentSettings {

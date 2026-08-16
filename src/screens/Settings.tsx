@@ -143,6 +143,35 @@ export default function Settings() {
             </div>
           </Card>
 
+          <Card title="Statement payment details" subtitle="Printed at the foot of every statement" padding="default">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+                <Input size="sm" label="Bank" value={b.bank_name || ""} placeholder="NAB" onChange={(e: any) => setB({ bank_name: e.target.value })} />
+                <Input size="sm" label="Account name" value={b.bank_account_name || ""} onChange={(e: any) => setB({ bank_account_name: e.target.value })} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+                <Input size="sm" label="BSB" value={b.bank_bsb || ""} placeholder="083 153" onChange={(e: any) => setB({ bank_bsb: e.target.value })} />
+                <Input size="sm" label="Account number" value={b.bank_account_no || ""} onChange={(e: any) => setB({ bank_account_no: e.target.value })} />
+              </div>
+              <Input
+                size="sm"
+                label="Payment reference note"
+                value={b.payment_reference_note || ""}
+                onChange={(e: any) => setB({ payment_reference_note: e.target.value })}
+              />
+              <Input
+                size="sm"
+                label="Card surcharge note"
+                value={b.card_surcharge_note || ""}
+                onChange={(e: any) => setB({ card_surcharge_note: e.target.value })}
+              />
+              <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                Leave a field blank and it drops off the statement rather than printing an empty label. Save with the
+                button above.
+              </div>
+            </div>
+          </Card>
+
           <Card title="Where the rest lives" padding="default">
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {[
