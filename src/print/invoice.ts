@@ -48,13 +48,32 @@ export interface InvoiceInput {
   customer: Customer | null | undefined;
   business: BusinessSettings | null;
   paySettings: PaymentSettings | null;
+  /* Printed in place of the order number. A split order being previewed before
+     it exists has no number to show, and inventing one would be worse than
+     saying so. */
+  numberLabel?: string;
 }
 
 export function invoiceTitle(order: Order): string {
   return `Tax Invoice - ${order.order_number}`;
 }
 
+/* One invoice per delivery. A split order prints a page each, because each
+   delivery goes to its own address on its own day and gets signed for
+   separately. */
+export function invoiceDocument(title: string, sheets: string[]): string {
+  return `<!doctype html>
+<html lang="en-AU"><head><meta charset="utf-8">
+<title>${esc(title)}</title>
+<style>${STYLE}</style></head>
+<body>${sheets.join("\n")}</body></html>`;
+}
+
 export function invoiceHtml(input: InvoiceInput): string {
+  return invoiceDocument(invoiceTitle(input.order), [invoiceSheet(input)]);
+}
+
+export function invoiceSheet(input: InvoiceInput): string {
   const { order, items, products, suburbs, customer, business, paySettings } = input;
 
   const suburb = suburbs.find((s) => s.id === order.suburb_id);
@@ -79,11 +98,17 @@ export function invoiceHtml(input: InvoiceInput): string {
   const gstRate = Number(paySettings?.gst_rate) || 10;
   const gst = gstOn ? Math.round((total - total / (1 + gstRate / 100)) * 100) / 100 : 0;
 
-  const addressLine = isDelivery
-    ? [order.street, [suburb?.name, suburb?.state, suburb?.postcode].filter(Boolean).join(" ")]
-        .filter(Boolean)
-        .join(", ") + ", Australia"
-    : "Pickup — collected from the yard";
+  const addressParts = [
+    order.street,
+    [suburb?.name, suburb?.state, suburb?.postcode].filter(Boolean).join(" "),
+  ].filter(Boolean);
+  const addressLine = !isDelivery
+    ? "Pickup — collected from the yard"
+    : /* An unaddressed preview should read as unaddressed, not as a lone
+         ", Australia" that looks like a rendering fault. */
+      addressParts.length
+      ? addressParts.join(", ") + ", Australia"
+      : "Not set";
 
   const rows = items
     .map((it) => {
@@ -104,10 +129,72 @@ export function invoiceHtml(input: InvoiceInput): string {
   const meta = (label: string, value: string) =>
     `<tr><th>${esc(label)}</th><td colspan="3">${esc(value)}</td></tr>`;
 
-  return `<!doctype html>
-<html lang="en-AU"><head><meta charset="utf-8">
-<title>${esc(invoiceTitle(order))}</title>
-<style>
+  return `<section class="sheet">
+    <header>
+      <img src="${PALM_LOGO_PNG}" alt="">
+      <div>
+        <h1>${esc(business?.name || "Surrey Hills Garden Supplies")}</h1>
+        ${business?.address ? `<p>${esc(business.address)}</p>` : ""}
+        ${business?.phone ? `<p>Ph: ${esc(business.phone)}</p>` : ""}
+        ${business?.email ? `<p>E: ${esc(business.email)}</p>` : ""}
+        ${business?.abn ? `<p>ABN: ${esc(business.abn)}</p>` : ""}
+      </div>
+    </header>
+    <hr class="heavy">
+
+    <table class="meta">
+      <tr>
+        <th>Tax Invoice No:</th>
+        <td>${esc(input.numberLabel || order.order_number)}</td>
+        <th class="right">Date:</th>
+        <td>${esc(dmy(order.placed_at.slice(0, 10)))}</td>
+      </tr>
+      ${contact?.name ? meta("Contact Name:", contact.name) : ""}
+      ${contact?.phone ? meta("Contact Phone:", contact.phone) : ""}
+      ${meta("Business Name:", customer?.name || order.walk_in_name || "Cash sale")}
+      ${meta(isDelivery ? "Delivery Address:" : "Collection:", addressLine)}
+      ${meta("Scheduled Date & Time:", scheduleText(order))}
+      ${order.po_number ? meta("P/O No:", order.po_number) : ""}
+    </table>
+
+    <table class="goods">
+      <thead><tr>
+        <th class="prod">Product</th><th class="qty">Qty</th><th class="unit">Unit</th><th class="price">Price</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <table class="totals">
+      ${totalRow("Price Adjustment", (adjust < 0 ? "−" : "") + AUD(Math.abs(adjust)))}
+      ${totalRow("Subtotal", AUD(goods))}
+      ${isDelivery ? totalRow(`Delivery${suburb ? ` (${suburb.name})` : ""}`, AUD(delivery)) : ""}
+      ${isDelivery && fuel ? totalRow("Fuel Surcharge", AUD(fuel)) : ""}
+      ${totalRow("Sale Total", AUD(saleTotal))}
+      ${totalRow(`Surcharge ${cardRate}%`, AUD(surcharge))}
+      ${gstOn ? totalRow(`${esc(paySettings?.gst_label || "GST")} included`, AUD(gst), "gst") : ""}
+      ${totalRow("Total", AUD(total), "grand")}
+    </table>
+
+    <div class="notes">
+      <section>
+        <h2>DELIVERY NOTES:</h2>
+        <p>${esc(order.delivery_notes || "")}</p>
+      </section>
+      <section>
+        <h2>ORDER NOTES:</h2>
+        <p>${esc(order.order_notes || "")}</p>
+      </section>
+    </div>
+
+    <footer>
+      <p class="fine">Delivery times are indicative only. The driver's responsibility ceases at the kerbside. Should the driver be directed</p>
+      <p class="fine">to enter the property, the purchaser assumes all risk for any damage to property or personal injury.</p>
+      <p class="sign"><span>Name ____________</span><span>Signature ____________</span></p>
+    </footer>
+  </section>`;
+}
+
+const STYLE = `
   @page { size: A4; margin: 15mm; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; }
@@ -120,6 +207,7 @@ export function invoiceHtml(input: InvoiceInput): string {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+  .sheet + .sheet { break-before: page; page-break-before: always; }
   hr { border: 0; margin: 0; }
   hr.heavy { border-top: 2px solid #000; }
   hr.rule { border-top: 1px solid #000; }
@@ -163,68 +251,4 @@ export function invoiceHtml(input: InvoiceInput): string {
   footer { padding-top: 26px; border-top: 1px solid #000; }
   footer .fine { margin: 0; font-size: 10px; line-height: 1.4; text-align: center; }
   footer .sign { display: flex; justify-content: center; gap: 60px; margin: 30px 0 0; font-size: 11px; }
-</style></head>
-<body>
-    <header>
-      <img src="${PALM_LOGO_PNG}" alt="">
-      <div>
-        <h1>${esc(business?.name || "Surrey Hills Garden Supplies")}</h1>
-        ${business?.address ? `<p>${esc(business.address)}</p>` : ""}
-        ${business?.phone ? `<p>Ph: ${esc(business.phone)}</p>` : ""}
-        ${business?.email ? `<p>E: ${esc(business.email)}</p>` : ""}
-        ${business?.abn ? `<p>ABN: ${esc(business.abn)}</p>` : ""}
-      </div>
-    </header>
-    <hr class="heavy">
-
-    <table class="meta">
-      <tr>
-        <th>Tax Invoice No:</th>
-        <td>${esc(order.order_number)}</td>
-        <th class="right">Date:</th>
-        <td>${esc(dmy(order.placed_at.slice(0, 10)))}</td>
-      </tr>
-      ${contact?.name ? meta("Contact Name:", contact.name) : ""}
-      ${contact?.phone ? meta("Contact Phone:", contact.phone) : ""}
-      ${meta("Business Name:", customer?.name || order.walk_in_name || "Cash sale")}
-      ${meta(isDelivery ? "Delivery Address:" : "Collection:", addressLine)}
-      ${meta("Scheduled Date & Time:", scheduleText(order))}
-      ${order.po_number ? meta("P/O No:", order.po_number) : ""}
-    </table>
-
-    <table class="goods">
-      <thead><tr>
-        <th class="prod">Product</th><th class="qty">Qty</th><th class="unit">Unit</th><th class="price">Price</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-
-    <table class="totals">
-      ${totalRow("Price Adjustment", (adjust < 0 ? "−" : "") + AUD(Math.abs(adjust)))}
-      ${totalRow("Subtotal", AUD(goods))}
-      ${isDelivery ? totalRow(`Delivery${suburb ? ` (${suburb.name})` : ""}`, AUD(delivery)) : ""}
-      ${isDelivery && fuel ? totalRow("Fuel Surcharge", AUD(fuel)) : ""}
-      ${totalRow("Sale Total", AUD(saleTotal))}
-      ${totalRow(`Surcharge ${cardRate}%`, AUD(surcharge))}
-      ${gstOn ? totalRow(`${esc(paySettings?.gst_label || "GST")} included`, AUD(gst), "gst") : ""}
-      ${totalRow("Total", AUD(total), "grand")}
-    </table>
-
-    <div class="notes">
-      <section>
-        <h2>DELIVERY NOTES:</h2>
-        <p>${esc(order.delivery_notes || "")}</p>
-      </section>
-      <section>
-        <h2>ORDER NOTES:</h2>
-        <p>${esc(order.order_notes || "")}</p>
-      </section>
-    </div>
-
-  <footer>
-    <p class="fine">Delivery times are indicative only. The driver's responsibility ceases at the kerbside. Should the driver be directed</p>
-    <p class="fine">to enter the property, the purchaser assumes all risk for any damage to property or personal injury.</p>
-    <p class="sign"><span>Name ____________</span><span>Signature ____________</span></p>
-  </footer>
-</body></html>`;
-}
+`;
