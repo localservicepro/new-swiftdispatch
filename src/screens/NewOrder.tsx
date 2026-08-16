@@ -352,7 +352,9 @@ export default function NewOrder() {
         customer: effectiveCustomer,
         business,
         paySettings,
-        numberLabel: isSplitDraft ? `Not yet created — delivery ${d.letter}` : "Not yet created",
+        numberLabel: isSplitDraft
+          ? `Not yet created — delivery ${d.letter} of ${drafts.length}`
+          : "Not yet created",
       });
     });
     printDocument(invoiceDocument("Tax Invoice - preview", sheets));

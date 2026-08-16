@@ -207,7 +207,11 @@ const STYLE = `
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
-  .sheet + .sheet { break-before: page; page-break-before: always; }
+  /* break-after on every sheet but the last, rather than break-before on every
+     sheet but the first: the same pagination, and the form print engines
+     handle most consistently. */
+  .sheet { break-inside: auto; }
+  .sheet:not(:last-child) { break-after: page; page-break-after: always; }
   hr { border: 0; margin: 0; }
   hr.heavy { border-top: 2px solid #000; }
   hr.rule { border-top: 1px solid #000; }

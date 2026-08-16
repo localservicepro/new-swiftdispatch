@@ -9,7 +9,11 @@ export function printDocument(html: string) {
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
   frame.setAttribute("title", "Print");
-  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+  /* Given a real A4 box and parked off-screen, rather than collapsed to 0×0:
+     a frame with no height gives the print layout nothing to paginate against,
+     and a multi-page job can come out as a single page. */
+  frame.style.cssText =
+    "position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0;opacity:0;pointer-events:none";
   document.body.appendChild(frame);
 
   const doc = frame.contentDocument;

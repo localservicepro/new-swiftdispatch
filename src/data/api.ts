@@ -6,7 +6,7 @@ import { persist, useApp, type DeliveryDraft, type CartLine } from "../store/sto
 import { derivePaymentType, feeOf, unitFor, roundToStep, unitPrice } from "../lib/domain";
 import { pushBlockers, readyForMyob } from "../lib/myob";
 import { pushContextFor, pushOrdersToMyob } from "./myob";
-import { invoiceHtml } from "../print/invoice";
+import { invoiceDocument, invoiceSheet, invoiceTitle } from "../print/invoice";
 import { printDocument } from "../print/print";
 import type {
   Customer,
@@ -362,18 +362,35 @@ export function printReceipt(id: string) {
   const s = S();
   const order = s.orders.find((o) => o.id === id);
   if (!order) return;
-  printDocument(
-    invoiceHtml({
-      order,
-      items: s.orderItems[id] || [],
+
+  /* A master carries no line items of its own — every product sits on one of
+     its splits (§5.2). Printing the master therefore means printing each
+     delivery, in letter order, or the whole job comes out blank. */
+  const splits =
+    order.kind === "master"
+      ? s.orders
+          .filter((o) => o.parent_order_id === order.id && !o.deleted_at)
+          .sort((a, b) => a.order_number.localeCompare(b.order_number))
+      : [];
+  const targets = splits.length ? splits : [order];
+
+  const sheets = targets.map((o, i) =>
+    invoiceSheet({
+      order: o,
+      items: s.orderItems[o.id] || [],
       products: s.products,
       suburbs: s.suburbs,
-      customer: s.customers.find((c) => c.id === order.customer_id),
+      customer: s.customers.find((c) => c.id === o.customer_id),
       business: s.business,
       paySettings: s.paySettings,
+      /* One sheet in someone's hand should say there are others. */
+      numberLabel: splits.length ? `${o.order_number} — delivery ${i + 1} of ${splits.length}` : undefined,
     })
   );
-  markProcessed(id);
+
+  printDocument(invoiceDocument(invoiceTitle(order), sheets));
+  targets.forEach((o) => markProcessed(o.id));
+  if (splits.length) markProcessed(order.id);
 }
 
 /* ---------- customers ---------- */
