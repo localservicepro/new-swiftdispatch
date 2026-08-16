@@ -3,6 +3,7 @@ import { useApp } from "../store/store";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
 import type { Customer } from "../lib/types";
+import { applyCustomerImport, exportCustomersCsv, planCustomerImport, type ImportPlan } from "../data/customerIo";
 import {
   addContact,
   addSite,
@@ -38,6 +39,9 @@ export default function Customers() {
   const { customers, suburbs, orders, orderItems, statements, paySettings } = app;
 
   const [query, setQuery] = useState("");
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importPlan, setImportPlan] = useState<{ plan: ImportPlan; file: string } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [entityFilter, setEntityFilter] = useState("Everyone");
   const [billingFilter, setBillingFilter] = useState("All settlement");
   const [selected, setSelected] = useState<string[]>([]);
@@ -100,6 +104,31 @@ export default function Customers() {
         </div>
         <Select size="sm" options={["Everyone", "Individual", "Sole trader", "Company"]} value={entityFilter} onChange={(e: any) => setEntityFilter(e.target.value)} style={{ width: 190, flexShrink: 0 }} />
         <Select size="sm" options={["All settlement", "Prepaid", "Account", "Blocked only"]} value={billingFilter} onChange={(e: any) => setBillingFilter(e.target.value)} style={{ width: 180, flexShrink: 0 }} />
+        <Button variant="outline" size="sm" iconLeft="download" onClick={() => {
+          const n = exportCustomersCsv();
+          app.toast({ tone: "success", title: `${n} ${n === 1 ? "customer" : "customers"} exported`, description: "The file is also the template the importer reads." });
+        }}>
+          Export CSV
+        </Button>
+        <Button variant="outline" size="sm" iconLeft="upload" onClick={() => fileRef.current?.click()}>
+          Import CSV
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            try {
+              setImportPlan({ plan: planCustomerImport(await file.text()), file: file.name });
+            } catch (err) {
+              app.toast({ tone: "danger", title: "Could not read that file", description: String((err as Error).message) });
+            }
+          }}
+        />
         <Button variant="primary" size="sm" iconLeft="plus" onClick={() => setNewCustOpen(true)}>
           Add customer
         </Button>
@@ -255,6 +284,29 @@ export default function Customers() {
           />
         )}
       </div>
+
+      {importPlan && (
+        <ImportModal
+          plan={importPlan.plan}
+          fileName={importPlan.file}
+          busy={importing}
+          onClose={() => setImportPlan(null)}
+          onConfirm={async () => {
+            setImporting(true);
+            const r = await applyCustomerImport(importPlan.plan);
+            setImporting(false);
+            setImportPlan(null);
+            if (r.failed.length)
+              app.toast({ tone: "danger", title: "Import did not finish", description: r.failed[0].error });
+            else
+              app.toast({
+                tone: "success",
+                title: `${r.created} added, ${r.updated} updated`,
+                description: importPlan.plan.rejects ? `${importPlan.plan.rejects} rows were skipped.` : undefined,
+              });
+          }}
+        />
+      )}
 
       {newCustOpen && <NewCustomerModal onClose={() => setNewCustOpen(false)} onCreated={(c) => ui.set({ custId: c.id, custTab: "overview" })} />}
 
@@ -997,6 +1049,123 @@ function StatementModal({
           </Button>
           <Button variant="primary" size="md" iconLeft="printer" onClick={onPrint}>
             Print statement
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* The import preview. Nothing has been written at this point — this is the
+   plan, and it is shown in full because a customer list is the wrong place to
+   find out afterwards that half the rows went somewhere unexpected. */
+function ImportModal({
+  plan,
+  fileName,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  plan: ImportPlan;
+  fileName: string;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const [show, setShow] = useState<"all" | "reject" | "warn">(plan.rejects ? "reject" : "all");
+  const rows = plan.rows.filter((r) =>
+    show === "reject" ? r.action === "reject" : show === "warn" ? r.warnings.length > 0 : true
+  );
+  const willWrite = plan.creates + plan.updates;
+
+  const tone = (a: string) =>
+    a === "reject" ? "var(--feedback-danger)" : a === "create" ? "var(--feedback-success)" : "var(--brand-primary)";
+
+  return (
+    <div
+      onClick={busy ? undefined : onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "rgba(6,7,15,.72)", backdropFilter: "blur(10px) saturate(140%)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "min(760px,100%)", maxHeight: "86vh", borderRadius: 16, background: "var(--surface-card)", border: "1px solid var(--border-default)", boxShadow: "0 24px 64px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" }}
+      >
+        <div style={{ padding: 16, borderBottom: "1px solid var(--border-subtle)" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Import customers</div>
+          <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 3 }}>
+            {fileName} — {plan.rows.length} {plan.rows.length === 1 ? "row" : "rows"} read. Nothing is saved until you
+            confirm.
+          </div>
+        </div>
+
+        <div style={{ padding: "12px 16px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[
+            { label: "New", value: plan.creates, colour: "var(--feedback-success)" },
+            { label: "Updated", value: plan.updates, colour: "var(--brand-primary)" },
+            { label: "Skipped", value: plan.rejects, colour: plan.rejects ? "var(--feedback-danger)" : "var(--text-faint)" },
+            { label: "Warnings", value: plan.warnings, colour: plan.warnings ? "var(--attention)" : "var(--text-faint)" },
+          ].map((t) => (
+            <div key={t.label} style={{ flex: "1 1 120px", padding: "9px 11px", borderRadius: 8, background: "var(--surface-raised)", border: "1px solid var(--border-subtle)" }}>
+              <div className="tabular" style={{ fontSize: 18, fontWeight: 600, color: t.colour }}>{t.value}</div>
+              <div style={{ fontSize: 11, color: "var(--text-faint)" }}>{t.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {plan.unknownColumns.length > 0 && (
+          <div style={{ padding: "12px 16px 0" }}>
+            <Alert tone="info" title="Columns that were ignored">
+              {plan.unknownColumns.join(", ")} — these do not match any customer field, so they were left alone.
+            </Alert>
+          </div>
+        )}
+
+        <div style={{ padding: "12px 16px 0" }}>
+          <Tabs
+            items={[
+              { id: "all", label: "Every row", count: plan.rows.length },
+              { id: "reject", label: "Skipped", count: plan.rejects },
+              { id: "warn", label: "Warnings", count: plan.warnings },
+            ]}
+            activeId={show}
+            onSelect={(id: string) => setShow(id as any)}
+            variant="underline"
+          />
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px", display: "flex", flexDirection: "column", gap: 4 }}>
+          {rows.map((r) => (
+            <div key={r.line} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "7px 9px", borderRadius: 7, background: "var(--surface-raised)" }}>
+              <span className="tabular" style={{ flexShrink: 0, width: 34, fontSize: 11, color: "var(--text-faint)" }}>{r.line}</span>
+              <span style={{ flexShrink: 0, width: 54, fontSize: 11, fontWeight: 600, color: tone(r.action) }}>
+                {r.action === "reject" ? "Skip" : r.action === "create" ? "New" : "Update"}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: "var(--text-primary)" }}>
+                  {r.name || "(no name)"}
+                  {r.accountNumber ? <span style={{ color: "var(--text-faint)" }}> · {r.accountNumber}</span> : null}
+                </div>
+                {r.reason && <div style={{ fontSize: 11, color: "var(--feedback-danger)", textWrap: "pretty" as any }}>{r.reason}</div>}
+                {r.warnings.map((w) => (
+                  <div key={w} style={{ fontSize: 11, color: "var(--attention)", textWrap: "pretty" as any }}>{w}</div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {rows.length === 0 && (
+            <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>Nothing here.</div>
+          )}
+        </div>
+
+        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+            Rows are matched on account number. A blank account number always makes a new customer.
+          </span>
+          <Button variant="ghost" size="md" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="md" iconLeft="upload" disabled={busy || willWrite === 0} onClick={onConfirm}>
+            {busy ? "Importing…" : willWrite === 0 ? "Nothing to import" : `Import ${willWrite} ${willWrite === 1 ? "row" : "rows"}`}
           </Button>
         </div>
       </div>
