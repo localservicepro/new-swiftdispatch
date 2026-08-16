@@ -229,14 +229,18 @@ export default function OrderDrawer() {
               </div>
             </div>
 
-            <div style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Button variant="secondary" size="sm" iconLeft="printer" onClick={() => markProcessed(focus.id)}>
-                Print receipt
-              </Button>
-              <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
-                Run sheet
-              </Button>
-              {!isMaster && sel && <MyobPushButton order={sel} />}
+            <div style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Button variant="secondary" size="sm" iconLeft="printer" onClick={() => markProcessed(focus.id)}>
+                  Print receipt
+                </Button>
+                <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
+                  Run sheet
+                </Button>
+              </div>
+              {/* Keyed so the doc-type choice and the re-send confirmation reset
+                  when the drawer swaps to a different order. */}
+              {!isMaster && sel && <MyobPushButton key={sel.id} order={sel} />}
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>

@@ -4,7 +4,7 @@
 import { supabase } from "../lib/supabase";
 import { persist, useApp, type DeliveryDraft, type CartLine } from "../store/store";
 import { derivePaymentType, feeOf, unitFor, roundToStep, unitPrice } from "../lib/domain";
-import { pushBlockers } from "../lib/myob";
+import { pushBlockers, readyForMyob } from "../lib/myob";
 import { pushContextFor, pushOrdersToMyob } from "./myob";
 import type {
   Customer,
@@ -105,17 +105,19 @@ export function copyToAllSplits(masterId: string, what: "address" | "schedule") 
 export function moveOrder(id: string, to: OrderStatus) {
   patchOrder(id, { status: to });
   logActivity("order", id, "status:" + to);
-  if (to === "delivered") void autoPushToMyob(id);
+  void autoPushToMyob(id);
 }
 
-/* Settings › Integrations can have a delivered order raise its sale straight
-   away. It stays silent when it can't — a half-configured MYOB should not throw
-   an error at whoever just marked a truck back in. */
-async function autoPushToMyob(orderId: string) {
+/* Settings › Integrations can have a finished sale raise itself straight away.
+   Finished is per fulfilment method — delivered on a truck, collected from the
+   yard, or rung up at the counter — so readyForMyob decides, not the delivered
+   stage alone. It stays silent when it can't: a half-configured MYOB should not
+   throw an error at whoever just marked a truck back in. */
+export async function autoPushToMyob(orderId: string) {
   const s = S();
   if (!s.myob?.enabled || !s.myob.auto_push) return;
   const order = s.orders.find((o) => o.id === orderId);
-  if (!order || order.myob_pushed_at) return;
+  if (!order || !readyForMyob(order)) return;
   const ctx = pushContextFor(order);
   if (!ctx || pushBlockers(ctx).length) return;
   await pushOrdersToMyob([ctx]);
@@ -341,6 +343,9 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
     orderItems: { ...st.orderItems, ...byOrder },
   }));
   logActivity("order", newOrders[0]?.id || null, "created:" + baseNumber);
+  /* A yard sale is finished the moment it is rung up — it never passes through
+     a status change, so auto-push has to be offered its one chance here. */
+  if (input.mode === "yardsale") newOrders.forEach((o) => void autoPushToMyob(o.id));
   return newOrders.find((o) => o.kind !== "split") || newOrders[0] || null;
 }
 

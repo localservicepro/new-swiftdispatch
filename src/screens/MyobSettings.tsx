@@ -476,8 +476,13 @@ export default function MyobSettings({ onSaved }: { onSaved: (msg: string) => vo
             <Switch
               checked={s.auto_push}
               onChange={(v: boolean) => patchMyobSettings({ auto_push: v })}
-              label="Send an order to MYOB as soon as it is marked delivered"
+              label="Send a sale to MYOB as soon as it is finished"
             />
+            <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+              Finished means the goods have left the yard: a delivery once it is marked delivered, a pickup once it is
+              collected, a yard sale the moment it is rung up. You can send any order by hand from its drawer at any
+              time, whatever stage it is at.
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, color: "var(--text-faint)" }}>
                 {s.last_pushed_at ? "Last sent " + new Date(s.last_pushed_at).toLocaleString("en-AU") : "Nothing sent yet"}

@@ -164,6 +164,10 @@ export interface MyobPushRequest {
   taxCode: string | null;
   taxCodeUid: string | null;
   lines: MyobLine[];
+  /* Only ever true when someone has read the "already in MYOB" banner and said
+     yes anyway. The edge function re-checks the order row before writing, so a
+     second tab or a double click cannot raise the sale twice. */
+  allowDuplicate?: boolean;
 }
 
 export interface BuildContext {
@@ -174,6 +178,9 @@ export interface BuildContext {
   customer: Customer | null | undefined;
   paySettings: DeliveryPricing | null | undefined;
   settings: MyobSettings;
+  /* Settings decide the usual shape; the drawer can pick the other one for a
+     single sale without the office changing the default and changing it back. */
+  docTypeOverride?: "order" | "invoice";
 }
 
 export function descriptionContext(c: BuildContext): DescriptionContext {
@@ -227,7 +234,7 @@ export function buildPushRequest(c: BuildContext): MyobPushRequest {
   return {
     orderId: order.id,
     orderNumber: order.order_number,
-    docType: settings.push_as,
+    docType: c.docTypeOverride || settings.push_as,
     layout: settings.sale_layout,
     customer: {
       id: customer?.id || null,
@@ -258,11 +265,17 @@ export function buildPushRequest(c: BuildContext): MyobPushRequest {
 }
 
 /* Reasons an order cannot go across yet. Shown on the button rather than
-   discovered as a 400 from MYOB three screens later. */
+   discovered as a 400 from MYOB three screens later.
+
+   Note what is NOT here: the order's stage. A yard sale is paid at the counter
+   and a pickup is collected from the yard, so neither ever reaches "delivered";
+   gating the push on that would leave half the sales stranded. Whoever is
+   looking at the order decides when it is finished. */
 export function pushBlockers(c: BuildContext): string[] {
   const { order, items, settings } = c;
   const out: string[] = [];
   if (!settings.enabled) out.push("The MYOB connection is switched off in Settings › Integrations.");
+  if (order.status === "cancelled") out.push("The order is cancelled, so there is nothing to invoice.");
   if (!settings.company_file_id) out.push("No company file chosen in Settings › Integrations.");
   if (!settings.account_code && !settings.account_uid) out.push("No income account set.");
   if (!settings.tax_code && !settings.tax_code_uid) out.push("No tax code set.");
@@ -276,3 +289,19 @@ export function pushBlockers(c: BuildContext): string[] {
 
 export const myobStateOf = (o: Order): "pushed" | "failed" | "pending" =>
   o.myob_pushed_at ? "pushed" : o.myob_error ? "failed" : "pending";
+
+/* Which orders a batch run sweeps up on its own. "Finished" means the goods
+   have left the yard, and that looks different per fulfilment method: a truck
+   run ends at delivered, a pickup ends when the customer collects it, and a
+   yard sale is done the moment it is rung up. A batch that only understood
+   "delivered" would quietly skip every counter sale. */
+export const readyForMyob = (o: Order): boolean => {
+  if (o.deleted_at || o.kind === "master" || o.myob_pushed_at) return false;
+  if (o.status === "cancelled" || o.status === "on_hold") return false;
+  if (o.kind === "yard_sale") return true;
+  if (o.method === "pickup") return o.status === "ready_for_pickup" || o.status === "delivered";
+  return o.status === "delivered";
+};
+
+export const readyReason = (o: Order): string =>
+  o.kind === "yard_sale" ? "yard sale" : o.method === "pickup" ? "picked up" : "delivered";

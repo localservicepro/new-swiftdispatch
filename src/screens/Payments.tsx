@@ -5,7 +5,7 @@ import { AUD, AUD0, dmy } from "../lib/domain";
 import { PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
 import { patchPaySettings } from "../data/api";
 import { pushContextFor, pushOrdersToMyob } from "../data/myob";
-import { pushBlockers } from "../lib/myob";
+import { pushBlockers, readyForMyob, readyReason } from "../lib/myob";
 import { Alert, Badge, Button, Card, DataTable, Input, Select, StatCard, Switch, Tabs } from "../design-system/components.js";
 
 export default function Payments() {
@@ -261,13 +261,24 @@ function MyobBatchCard() {
   const { orders, myob } = app;
   const [busy, setBusy] = useState(false);
 
-  const delivered = orders.filter(
-    (o: Order) => !o.deleted_at && o.kind !== "master" && o.status === "delivered" && !o.myob_pushed_at
-  );
-  const contexts = delivered.map(pushContextFor).filter(Boolean) as NonNullable<ReturnType<typeof pushContextFor>>[];
+  const finished = orders.filter(readyForMyob);
+  const contexts = finished.map((o: Order) => pushContextFor(o)).filter(Boolean) as NonNullable<
+    ReturnType<typeof pushContextFor>
+  >[];
   const ready = contexts.filter((c) => pushBlockers(c).length === 0);
   const held = contexts.length - ready.length;
   const off = !myob?.enabled;
+
+  /* Spelled out because "3 orders" hides that two of them were counter sales
+     nobody would think to look for under a delivery heading. */
+  const mix = ready.reduce<Record<string, number>>((acc, c) => {
+    const k = readyReason(c.order);
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+  const mixText = Object.entries(mix)
+    .map(([k, n]) => `${n} ${k}`)
+    .join(", ");
 
   return (
     <Card title="MYOB" subtitle="Batch push" padding="default">
@@ -275,8 +286,16 @@ function MyobBatchCard() {
         <div style={{ fontSize: 13, color: "var(--text-muted)", textWrap: "pretty" as any }}>
           {off
             ? "The MYOB connection is switched off."
-            : `${ready.length} delivered ${ready.length === 1 ? "order is" : "orders are"} ready to go across.`}
+            : ready.length
+              ? `${ready.length} finished ${ready.length === 1 ? "sale is" : "sales are"} ready to go across — ${mixText}.`
+              : "Nothing finished is waiting — everything MYOB hasn't seen is still open."}
         </div>
+        {!off && (
+          <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+            Counter sales and pickups count as finished the moment the goods leave the yard, so they don't have to be
+            marked delivered first.
+          </div>
+        )}
         {!off && held > 0 && (
           <div style={{ fontSize: 11, color: "var(--attention)", textWrap: "pretty" as any }}>
             {held} held back — {pushBlockers(contexts.find((c) => pushBlockers(c).length > 0)!)[0]}

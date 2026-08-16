@@ -100,8 +100,11 @@ export interface PushResult {
   error?: string;
 }
 
-export async function pushOrdersToMyob(contexts: BuildContext[]): Promise<PushResult[]> {
-  const requests: MyobPushRequest[] = contexts.map(buildPushRequest);
+export async function pushOrdersToMyob(
+  contexts: BuildContext[],
+  allowDuplicate = false
+): Promise<PushResult[]> {
+  const requests: MyobPushRequest[] = contexts.map((c) => ({ ...buildPushRequest(c), allowDuplicate }));
   if (!requests.length) return [];
   const app = S();
 
@@ -146,11 +149,12 @@ export async function pushOrdersToMyob(contexts: BuildContext[]): Promise<PushRe
 }
 
 /* Assemble the context a push needs from whatever the store already holds. */
-export function pushContextFor(order: Order): BuildContext | null {
+export function pushContextFor(order: Order, docTypeOverride?: "order" | "invoice"): BuildContext | null {
   const s = S();
   if (!s.myob) return null;
   return {
     order,
+    docTypeOverride,
     items: s.orderItems[order.id] || [],
     products: s.products,
     suburbs: s.suburbs,

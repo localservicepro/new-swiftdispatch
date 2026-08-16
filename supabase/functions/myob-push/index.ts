@@ -228,6 +228,7 @@ interface PushRequest {
   taxCode: string | null;
   taxCodeUid: string | null;
   lines: PushLine[];
+  allowDuplicate?: boolean;
 }
 
 const buildLine = (l: PushLine, accountUid: string, jobUid: string | null, taxUid: string | null) => ({
@@ -435,6 +436,21 @@ Deno.serve(async (req) => {
       for (const r of requests) {
         if (!r?.orderId) continue;
         try {
+          /* Last line of defence against a duplicate sale: the order row is
+             re-read here, so two tabs, a double click or a stale batch cannot
+             raise the same sale twice. Only an explicit "yes, create a second
+             sale" from the drawer gets past it. */
+          if (!r.allowDuplicate) {
+            const { data: current } = await admin
+              .from("orders")
+              .select("myob_pushed_at, myob_number, myob_doc_type")
+              .eq("id", r.orderId)
+              .maybeSingle();
+            if (current?.myob_pushed_at)
+              throw new MyobError(
+                `${r.orderNumber} is already in MYOB as ${current.myob_doc_type === "order" ? "order" : "invoice"} ${current.myob_number || "(no number)"}. Use "Send again" on the order if you really want a second sale.`,
+              );
+          }
           const out = await push(creds, settings.company_file_id, r);
           await admin
             .from("orders")
