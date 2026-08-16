@@ -40,9 +40,21 @@ const scheduleText = (o: Order): string => {
   return dmy(o.delivery_date) + day + (loose ? " — " + w : " at " + w);
 };
 
-export interface InvoiceInput {
+/* One delivery's worth of an invoice: its own order row and its own lines. */
+export interface InvoiceGroup {
   order: Order;
   items: OrderItem[];
+}
+
+export interface InvoiceInput {
+  /* The order the sheet is headed by. For a combined split invoice that is the
+     master, which carries the customer, notes and adjustment but no lines. */
+  order: Order;
+  items: OrderItem[];
+  /* Set to put several deliveries on one sheet. Each is listed under its own
+     heading in the goods table with its address and schedule in the meta block,
+     and the totals are struck across the lot. */
+  groups?: InvoiceGroup[];
   products: Product[];
   suburbs: Suburb[];
   customer: Customer | null | undefined;
@@ -76,14 +88,26 @@ export function invoiceHtml(input: InvoiceInput): string {
 export function invoiceSheet(input: InvoiceInput): string {
   const { order, items, products, suburbs, customer, business, paySettings } = input;
 
+  const groups: InvoiceGroup[] = input.groups?.length ? input.groups : [{ order, items }];
+  const multi = groups.length > 1;
+  const letterOf = (i: number) => String.fromCharCode(65 + i);
+
   const suburb = suburbs.find((s) => s.id === order.suburb_id);
   const contact = customer?.contacts?.find((c) => c.id === order.contact_id) || customer?.contacts?.[0];
   const isDelivery = order.method === "delivery";
 
-  const goods = goodsOf(items);
+  const feeFor = (o: Order) =>
+    o.method === "delivery" ? feeOf(o, suburbs, paySettings as DeliveryPricing | null) : 0;
+  const sum = (f: (g: InvoiceGroup) => number) => groups.reduce((t, g) => t + f(g), 0);
+
+  const goods = Math.round(sum((g) => goodsOf(g.items)) * 100) / 100;
+  /* The adjustment is a property of the order as a whole, so on a combined
+     sheet it is struck once against the combined goods rather than per
+     delivery — which is what the separate sheets add back up to. */
   const adjust = adjustmentOf(order, goods);
-  const delivery = isDelivery ? feeOf(order, suburbs, paySettings as DeliveryPricing | null) : 0;
-  const fuel = isDelivery ? Number(order.fuel_surcharge) || 0 : 0;
+  const delivery = Math.round(sum((g) => feeFor(g.order)) * 100) / 100;
+  const fuel =
+    Math.round(sum((g) => (g.order.method === "delivery" ? Number(g.order.fuel_surcharge) || 0 : 0)) * 100) / 100;
   const saleTotal = Math.round((goods + adjust + delivery + fuel) * 100) / 100;
 
   /* The card surcharge is a settlement cost, so it only lands on an invoice the
@@ -98,28 +122,47 @@ export function invoiceSheet(input: InvoiceInput): string {
   const gstRate = Number(paySettings?.gst_rate) || 10;
   const gst = gstOn ? Math.round((total - total / (1 + gstRate / 100)) * 100) / 100 : 0;
 
-  const addressParts = [
-    order.street,
-    [suburb?.name, suburb?.state, suburb?.postcode].filter(Boolean).join(" "),
-  ].filter(Boolean);
-  const addressLine = !isDelivery
-    ? "Pickup — collected from the yard"
-    : /* An unaddressed preview should read as unaddressed, not as a lone
-         ", Australia" that looks like a rendering fault. */
-      addressParts.length
-      ? addressParts.join(", ") + ", Australia"
-      : "Not set";
+  const addressOf = (o: Order): string => {
+    if (o.method !== "delivery") return "Pickup — collected from the yard";
+    const sb = suburbs.find((x) => x.id === o.suburb_id);
+    const parts = [o.street, [sb?.name, sb?.state, sb?.postcode].filter(Boolean).join(" ")].filter(Boolean);
+    /* An unaddressed preview should read as unaddressed, not as a lone
+       ", Australia" that looks like a rendering fault. */
+    return parts.length ? parts.join(", ") + ", Australia" : "Not set";
+  };
 
-  const rows = items
-    .map((it) => {
-      const p = products.find((x) => x.id === it.product_id);
-      const name = [p?.name || it.description || "Item", p?.unit].filter(Boolean).join(" ");
-      return `<tr>
+  const addressLine = addressOf(order);
+  /* "Delivery (Belmont, Grovedale)" on a combined sheet, "Delivery (Belmont)"
+     on a single one — the suburbs actually charged for, never repeated. */
+  const deliveryWhere = [
+    ...new Set(
+      groups
+        .filter((g) => g.order.method === "delivery")
+        .map((g) => suburbs.find((x) => x.id === g.order.suburb_id)?.name)
+        .filter(Boolean) as string[]
+    ),
+  ].join(", ");
+  void suburb;
+  void isDelivery;
+
+  const itemRow = (it: OrderItem) => {
+    const p = products.find((x) => x.id === it.product_id);
+    const name = [p?.name || it.description || "Item", p?.unit].filter(Boolean).join(" ");
+    return `<tr>
         <td class="prod">${esc(name)}</td>
         <td class="qty">${esc(qty(Number(it.qty)))}</td>
         <td class="unit">${esc(AUD(Number(it.unit_price)))}</td>
         <td class="price">${esc(AUD(Number(it.line_total)))}</td>
       </tr>`;
+  };
+
+  const rows = groups
+    .map((g, i) => {
+      const own = g.items.map(itemRow).join("");
+      if (!multi) return own;
+      const sb = suburbs.find((x) => x.id === g.order.suburb_id);
+      const where = g.order.method === "delivery" ? [g.order.street, sb?.name].filter(Boolean).join(", ") : "Yard collection";
+      return `<tr class="group"><td colspan="4">Delivery ${letterOf(i)} — ${esc(where)} · ${esc(scheduleText(g.order))}</td></tr>${own}`;
     })
     .join("");
 
@@ -152,8 +195,16 @@ export function invoiceSheet(input: InvoiceInput): string {
       ${contact?.name ? meta("Contact Name:", contact.name) : ""}
       ${contact?.phone ? meta("Contact Phone:", contact.phone) : ""}
       ${meta("Business Name:", customer?.name || order.walk_in_name || "Cash sale")}
-      ${meta(isDelivery ? "Delivery Address:" : "Collection:", addressLine)}
-      ${meta("Scheduled Date & Time:", scheduleText(order))}
+      ${
+        multi
+          ? groups
+              .map((g, i) =>
+                meta(`Delivery ${letterOf(i)}:`, `${addressOf(g.order)} — ${scheduleText(g.order)}`)
+              )
+              .join("")
+          : meta(order.method === "delivery" ? "Delivery Address:" : "Collection:", addressLine) +
+            meta("Scheduled Date & Time:", scheduleText(order))
+      }
       ${order.po_number ? meta("P/O No:", order.po_number) : ""}
     </table>
 
@@ -167,8 +218,8 @@ export function invoiceSheet(input: InvoiceInput): string {
     <table class="totals">
       ${totalRow("Price Adjustment", (adjust < 0 ? "−" : "") + AUD(Math.abs(adjust)))}
       ${totalRow("Subtotal", AUD(goods))}
-      ${isDelivery ? totalRow(`Delivery${suburb ? ` (${suburb.name})` : ""}`, AUD(delivery)) : ""}
-      ${isDelivery && fuel ? totalRow("Fuel Surcharge", AUD(fuel)) : ""}
+      ${delivery ? totalRow(`Delivery${deliveryWhere ? ` (${deliveryWhere})` : ""}`, AUD(delivery)) : ""}
+      ${fuel ? totalRow("Fuel Surcharge", AUD(fuel)) : ""}
       ${totalRow("Sale Total", AUD(saleTotal))}
       ${totalRow(`Surcharge ${cardRate}%`, AUD(surcharge))}
       ${gstOn ? totalRow(`${esc(paySettings?.gst_label || "GST")} included`, AUD(gst), "gst") : ""}
@@ -231,6 +282,9 @@ const STYLE = `
 
   table.goods th { font-weight: bold; text-align: left; padding: 0 0 7px; border-bottom: 1px solid #000; }
   table.goods td { padding: 8px 0 9px; border-bottom: 1px solid #ccc; vertical-align: top; }
+  /* Each delivery's heading on a combined sheet — no rule under it, so the
+     goods below still read as one block per delivery. */
+  table.goods tr.group td { padding: 14px 0 3px; border-bottom: 0; font-weight: bold; }
   .prod { width: auto; }
   .qty  { width: 120px; text-align: center; }
   .unit { width: 50px;  text-align: right; }

@@ -19,10 +19,8 @@ import {
   WINDOWS_30,
   WINDOWS_60,
 } from "../lib/domain";
-import { PAYMENT_METHODS, type Order, type OrderItem } from "../lib/types";
+import { PAYMENT_METHODS } from "../lib/types";
 import { addContact, createOrder } from "../data/api";
-import { invoiceDocument, invoiceSheet } from "../print/invoice";
-import { printDocument } from "../print/print";
 import {
   Alert,
   Button,
@@ -265,8 +263,9 @@ export default function NewOrder() {
     });
     setCreating(false);
     if (order) {
-      app.toast({ tone: "success", title: `${order.order_number} created`, description: yard ? "Docket printed at the counter." : undefined });
+      app.toast({ tone: "success", title: `${order.order_number} created` });
       ui.set({
+        printPrompt: { orderId: order.id, orderNumber: order.order_number, splits: isSplitDraft ? drafts.length : 0 },
         nav: yard ? "neworder" : "board",
         cart: [],
         drafts: [blankDraft("A")],
@@ -280,84 +279,6 @@ export default function NewOrder() {
         yardWalkInName: "",
       });
     }
-  };
-
-  /* Print from step 2 shows the tax invoice this order will become, not the
-     admin screen. The order has no number until it is created, so the number
-     line says so rather than inventing one — a split prints a page per delivery,
-     the same as it will once created. */
-  const printPreview = () => {
-    const placedAt = new Date().toISOString();
-    const sheets = drafts.map((d) => {
-      const lines = isSplitDraft ? cart.filter((l) => l.to === d.letter) : cart;
-      const items: OrderItem[] = lines.map((l, i) => {
-        const price = priceOf(l.productId);
-        return {
-          id: `preview-${d.letter}-${i}`,
-          order_id: "preview",
-          product_id: l.productId,
-          variant_id: null,
-          description: null,
-          qty: l.qty,
-          unit_price: price,
-          line_total: Math.round(price * l.qty * 100) / 100,
-        };
-      });
-      const order = {
-        id: "preview",
-        order_number: "",
-        kind: yard ? "yard_sale" : isSplitDraft ? "split" : "standard",
-        parent_order_id: null,
-        customer_id: effectiveCustomer?.id || null,
-        contact_id: ui.orderContact,
-        walk_in_name: ui.yardWalkInName || null,
-        customer_override: null,
-        status: "requested",
-        method: yard ? "pickup" : ui.fulfilMethod,
-        street: d.street,
-        suburb_id: d.suburbId,
-        delivery_fee: d.fee,
-        fee_source: d.feeSource,
-        delivery_date: d.dateIso,
-        delivery_window: d.window,
-        placed_at: placedAt,
-        truck_id: d.truckId,
-        driver_id: null,
-        payment_type: null,
-        payment_type_overridden: false,
-        payment_method: (ui.settleMethod as Order["payment_method"]) || null,
-        payment_status: "pending",
-        po_number: ui.poNumber || null,
-        order_notes: ui.orderNotesDraft || null,
-        delivery_notes: ui.deliveryNotesDraft || null,
-        adjustment_type: adjustNum > 0 ? (ui.adjustType === "Percent" ? "percent" : "amount") : null,
-        adjustment_value: adjustNum > 0 ? adjustSigned : null,
-        processed_at: null,
-        overrides: {},
-        fuel_surcharge: yard || !isDelivery ? 0 : fuelOf(paySettings),
-        pod_photo_url: null,
-        pod_at: null,
-        myob_uid: null,
-        myob_doc_type: null,
-        myob_number: null,
-        myob_pushed_at: null,
-        myob_error: null,
-        deleted_at: null,
-      } as Order;
-      return invoiceSheet({
-        order,
-        items,
-        products,
-        suburbs,
-        customer: effectiveCustomer,
-        business,
-        paySettings,
-        numberLabel: isSplitDraft
-          ? `Not yet created — delivery ${d.letter} of ${drafts.length}`
-          : "Not yet created",
-      });
-    });
-    printDocument(invoiceDocument("Tax Invoice - preview", sheets));
   };
 
   /* Enter advances the flow where a continue action exists (§6). */
@@ -1339,18 +1260,9 @@ export default function NewOrder() {
                         ? `Create ${drafts.length} split orders`
                         : "Create order"}
                 </Button>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <Button variant="ghost" size="md" iconLeft="arrow-left" fullWidth onClick={() => ui.set({ orderStep: 1 })}>
-                      Back
-                    </Button>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Button variant="outline" size="md" iconLeft="printer" fullWidth onClick={printPreview}>
-                      Print
-                    </Button>
-                  </div>
-                </div>
+                <Button variant="ghost" size="md" iconLeft="arrow-left" fullWidth onClick={() => ui.set({ orderStep: 1 })}>
+                  Back
+                </Button>
                 <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
                   {yard
                     ? "Enter takes the payment and prints the docket."

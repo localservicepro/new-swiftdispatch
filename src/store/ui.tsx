@@ -6,6 +6,15 @@ import React, { createContext, useContext, useMemo, useState } from "react";
 import { blankDraft, useApp, type CartLine, type DeliveryDraft } from "./store";
 import type { OrderStatus } from "../lib/types";
 
+/* Raised after an order is created so the tax invoice can be printed with its
+   real number on it. Lives here, not in the new-order screen, because a
+   standard order navigates to the board the moment it is created. */
+export interface PrintPrompt {
+  orderId: string;
+  orderNumber: string;
+  splits: number;
+}
+
 export interface PickerState {
   kind: "date" | "window";
   current?: string;
@@ -48,6 +57,7 @@ interface UiState {
   savedDraft: SavedDraft | null;
 
   // pickers & drawers
+  printPrompt: PrintPrompt | null;
   picker: PickerState | null;
   drawerOpen: boolean;
   selectedOrderId: string | null; // null while drawer open = master group view
@@ -94,6 +104,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     orderNotesDraft: "",
     deliveryNotesDraft: "",
     savedDraft: readSavedDraft(),
+    printPrompt: null as PrintPrompt | null,
     picker: null as PickerState | null,
     drawerOpen: false,
     selectedOrderId: null as string | null,

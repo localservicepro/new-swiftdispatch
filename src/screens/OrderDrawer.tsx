@@ -233,8 +233,13 @@ export default function OrderDrawer() {
             <div style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Button variant="secondary" size="sm" iconLeft="printer" onClick={() => printReceipt(focus.id)}>
-                  Print receipt
+                  {isMaster && splits.length > 1 ? `Print ${splits.length} invoices` : "Print receipt"}
                 </Button>
+                {isMaster && splits.length > 1 && (
+                  <Button variant="outline" size="sm" iconLeft="printer" onClick={() => printReceipt(focus.id, "combined")}>
+                    Print as one invoice
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
                   Run sheet
                 </Button>

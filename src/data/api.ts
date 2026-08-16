@@ -358,38 +358,59 @@ export function markProcessed(id: string) {
 
 /* Print receipt: open the browser's print dialogue on the tax invoice, the same
    one Ctrl+P shows, and record that the order has been printed. */
-export function printReceipt(id: string) {
+export type PrintMode = "separate" | "combined";
+
+export function splitsOf(masterId: string) {
+  return S()
+    .orders.filter((o) => o.parent_order_id === masterId && !o.deleted_at)
+    .sort((a, b) => a.order_number.localeCompare(b.order_number));
+}
+
+export function printReceipt(id: string, mode: PrintMode = "separate") {
   const s = S();
   const order = s.orders.find((o) => o.id === id);
   if (!order) return;
 
   /* A master carries no line items of its own — every product sits on one of
-     its splits (§5.2). Printing the master therefore means printing each
-     delivery, in letter order, or the whole job comes out blank. */
-  const splits =
-    order.kind === "master"
-      ? s.orders
-          .filter((o) => o.parent_order_id === order.id && !o.deleted_at)
-          .sort((a, b) => a.order_number.localeCompare(b.order_number))
-      : [];
-  const targets = splits.length ? splits : [order];
+     its splits (§5.2). Printing the master therefore means printing its
+     deliveries, or the whole job comes out blank. */
+  const splits = order.kind === "master" ? splitsOf(order.id) : [];
+  const common = {
+    products: s.products,
+    suburbs: s.suburbs,
+    customer: s.customers.find((c) => c.id === order.customer_id),
+    business: s.business,
+    paySettings: s.paySettings,
+  };
 
-  const sheets = targets.map((o, i) =>
-    invoiceSheet({
-      order: o,
-      items: s.orderItems[o.id] || [],
-      products: s.products,
-      suburbs: s.suburbs,
-      customer: s.customers.find((c) => c.id === o.customer_id),
-      business: s.business,
-      paySettings: s.paySettings,
-      /* One sheet in someone's hand should say there are others. */
-      numberLabel: splits.length ? `${o.order_number} — delivery ${i + 1} of ${splits.length}` : undefined,
-    })
-  );
+  let sheets: string[];
+  if (splits.length && mode === "combined") {
+    /* One invoice for the lot: every delivery listed under its own heading,
+       one total at the foot, one signature. */
+    sheets = [
+      invoiceSheet({
+        ...common,
+        order,
+        items: [],
+        groups: splits.map((o) => ({ order: o, items: s.orderItems[o.id] || [] })),
+      }),
+    ];
+  } else {
+    const targets = splits.length ? splits : [order];
+    sheets = targets.map((o, i) =>
+      invoiceSheet({
+        ...common,
+        order: o,
+        items: s.orderItems[o.id] || [],
+        customer: s.customers.find((c) => c.id === o.customer_id),
+        /* One sheet in someone's hand should say there are others. */
+        numberLabel: splits.length ? `${o.order_number} — delivery ${i + 1} of ${splits.length}` : undefined,
+      })
+    );
+  }
 
   printDocument(invoiceDocument(invoiceTitle(order), sheets));
-  targets.forEach((o) => markProcessed(o.id));
+  (splits.length ? splits : [order]).forEach((o) => markProcessed(o.id));
   if (splits.length) markProcessed(order.id);
 }
 
