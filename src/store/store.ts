@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { supabase } from "../lib/supabase";
+import { pageAll, supabase } from "../lib/supabase";
 import type { MyobSettings } from "../lib/myob";
 import type {
   BusinessSettings,
@@ -179,20 +179,24 @@ export const useApp = create<AppState>((set, get) => ({
         emails,
         myob,
       ] = await Promise.all([
-        supabase.from("suburbs").select("*").order("name"),
+        /* Anything that grows with the business is paged; the settings-sized
+           tables are read in one go. See pageAll on why. */
+        pageAll(() => supabase.from("suburbs").select("*").order("name")),
         supabase.from("product_categories").select("*").order("sort_order"),
-        supabase.from("products").select("*").order("sku"),
-        supabase.from("product_variants").select("*"),
+        pageAll(() => supabase.from("products").select("*").order("sku")),
+        pageAll(() => supabase.from("product_variants").select("*").order("id")),
         supabase.from("specials").select("*"),
         supabase.from("special_products").select("*"),
         supabase.from("team_members").select("*").order("created_at"),
         supabase.from("trucks").select("*").order("created_at"),
-        supabase.from("customers").select("*").order("account_number"),
-        supabase.from("customer_contacts").select("*").order("created_at"),
-        supabase.from("customer_sites").select("*"),
-        supabase.from("orders").select("*").is("deleted_at", null).order("placed_at"),
-        supabase.from("order_items").select("*").order("created_at"),
-        supabase.from("payments").select("*").order("created_at", { ascending: false }),
+        pageAll(() => supabase.from("customers").select("*").order("account_number")),
+        pageAll(() => supabase.from("customer_contacts").select("*").order("created_at").order("id")),
+        pageAll(() => supabase.from("customer_sites").select("*").order("id")),
+        pageAll(() =>
+          supabase.from("orders").select("*").is("deleted_at", null).order("placed_at").order("id")
+        ),
+        pageAll(() => supabase.from("order_items").select("*").order("created_at").order("id")),
+        pageAll(() => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id")),
         supabase.from("statements").select("*").order("generated_at", { ascending: false }),
         supabase.from("business_settings").select("*").maybeSingle(),
         supabase.from("payment_settings").select("*").maybeSingle(),

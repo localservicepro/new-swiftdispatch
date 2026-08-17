@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { fetchIn, pageAll, supabase } from "../lib/supabase";
 import { qtyText, shortDate, STATUS_ACCENT } from "../lib/domain";
 import { mapsDirectionsUrl, mapsSearchUrl } from "../lib/googleMaps";
 import type { Order, OrderItem, Product, Suburb } from "../lib/types";
@@ -126,18 +126,20 @@ function DriverApp({ driver, onSignOut }: { driver: DriverUser; onSignOut: () =>
 
   const load = async () => {
     const [o, s, p] = await Promise.all([
-      supabase.from("orders").select("*").eq("driver_id", driver.id).is("deleted_at", null),
-      supabase.from("suburbs").select("*"),
-      supabase.from("products").select("*"),
+      pageAll(() =>
+        supabase.from("orders").select("*").eq("driver_id", driver.id).is("deleted_at", null).order("id")
+      ),
+      pageAll(() => supabase.from("suburbs").select("*").order("name")),
+      pageAll(() => supabase.from("products").select("*").order("sku")),
     ]);
     const mine = (o.data || []) as Order[];
     setOrders(mine);
     setSuburbs((s.data || []) as Suburb[]);
     setProducts((p.data || []) as Product[]);
     if (mine.length) {
-      const { data: its } = await supabase.from("order_items").select("*").in("order_id", mine.map((x) => x.id));
+      const its = await fetchIn<OrderItem>("order_items", "order_id", mine.map((x) => x.id));
       const by: Record<string, OrderItem[]> = {};
-      ((its || []) as OrderItem[]).forEach((i) => (by[i.order_id] = by[i.order_id] || []).push(i));
+      its.forEach((i) => (by[i.order_id] = by[i.order_id] || []).push(i));
       setItems(by);
     }
   };

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { fetchIn, pageAll, supabase } from "../lib/supabase";
 import { AUD, AUD0, dmy, fuelOf, resolvedSuburbFee, suburbRate, unitPrice } from "../lib/domain";
 import type { Customer, CustomerSite, Order, OrderItem, PaymentSettings, Product, ProductCategory, Special, Suburb } from "../lib/types";
 import {
@@ -181,7 +181,15 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
       supabase.from("product_categories").select("*").order("sort_order"),
       supabase.from("specials").select("*"),
       supabase.from("special_products").select("*"),
-      supabase.from("orders").select("*").eq("customer_id", user.id).is("deleted_at", null).order("placed_at", { ascending: false }),
+      pageAll(() =>
+        supabase
+          .from("orders")
+          .select("*")
+          .eq("customer_id", user.id)
+          .is("deleted_at", null)
+          .order("placed_at", { ascending: false })
+          .order("id")
+      ),
       supabase.from("payment_settings").select("*").maybeSingle(),
     ]);
     const idsBySpecial: Record<string, string[]> = {};
@@ -196,9 +204,9 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
     const myOrders = (o.data || []) as Order[];
     setOrders(myOrders);
     if (myOrders.length) {
-      const { data: its } = await supabase.from("order_items").select("*").in("order_id", myOrders.map((x) => x.id));
+      const its = await fetchIn<OrderItem>("order_items", "order_id", myOrders.map((x) => x.id));
       const by: Record<string, OrderItem[]> = {};
-      ((its || []) as OrderItem[]).forEach((i) => (by[i.order_id] = by[i.order_id] || []).push(i));
+      its.forEach((i) => (by[i.order_id] = by[i.order_id] || []).push(i));
       setItemsByOrder(by);
     }
   };
