@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store/store";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
@@ -34,6 +34,8 @@ import {
   Tabs,
 } from "../design-system/components.js";
 
+const PAGE = 100;
+
 export default function Customers() {
   const ui = useUi();
   const app = useApp();
@@ -45,6 +47,7 @@ export default function Customers() {
   const [importing, setImporting] = useState(false);
   const [entityFilter, setEntityFilter] = useState("Everyone");
   const [billingFilter, setBillingFilter] = useState("All settlement");
+  const [shown, setShown] = useState(PAGE);
   const [selected, setSelected] = useState<string[]>([]);
   const [newCustOpen, setNewCustOpen] = useState(false);
   const [statementModal, setStatementModal] = useState<{ month: string; scope: "all" | "delivered" } | null>(null);
@@ -54,31 +57,44 @@ export default function Customers() {
   const cBlock = blockedState(cust);
 
   const q = query.trim().toLowerCase();
-  const rows = customers
-    .filter((c) => {
+  /* Two and a half thousand accounts, rebuilt and re-rendered on every
+     keystroke, is what made this tab hang. Filtering stays over everyone —
+     search has to reach the whole book — but only a screenful becomes rows. */
+  const matching = useMemo(
+    () =>
+      customers.filter((c) => {
       if (entityFilter !== "Everyone" && c.entity !== entityFilter) return false;
       if (billingFilter === "Prepaid" && c.billing !== "prepaid") return false;
       if (billingFilter === "Account" && c.billing !== "account") return false;
       if (billingFilter === "Blocked only" && !blockedState(c).blocked) return false;
-      if (!q) return true;
-      return (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
-        .toLowerCase()
-        .includes(q);
-    })
-    .map((c) => {
-      const bl = blockedState(c);
-      const ordersContact = c.contacts.find((x) => x.roles.includes("Orders")) || c.contacts[0];
-      return {
-        c,
-        bl,
-        contact: ordersContact?.name || "—",
-        phone: ordersContact?.phone || "—",
-        settle: c.billing === "account" ? `${c.terms_days} days account` : "Prepaid",
-        credit: c.billing === "account" ? `${AUD0(Number(c.balance))} / ${AUD0(Number(c.credit_limit))}` : "—",
-        state: bl.blocked ? "Blocked" : c.billing === "account" ? "Open" : "Prepaid",
-        portal: c.billing !== "account" ? "—" : c.portal_enabled ? "Enabled" : "Off",
-      };
-    });
+        if (!q) return true;
+        return (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
+          .toLowerCase()
+          .includes(q);
+      }),
+    [customers, entityFilter, billingFilter, q]
+  );
+
+  useEffect(() => setShown(PAGE), [query, entityFilter, billingFilter]);
+
+  const rows = useMemo(
+    () =>
+      matching.slice(0, shown).map((c) => {
+        const bl = blockedState(c);
+        const ordersContact = c.contacts.find((x) => x.roles.includes("Orders")) || c.contacts[0];
+        return {
+          c,
+          bl,
+          contact: ordersContact?.name || "—",
+          phone: ordersContact?.phone || "—",
+          settle: c.billing === "account" ? `${c.terms_days} days account` : "Prepaid",
+          credit: c.billing === "account" ? `${AUD0(Number(c.balance))} / ${AUD0(Number(c.credit_limit))}` : "—",
+          state: bl.blocked ? "Blocked" : c.billing === "account" ? "Open" : "Prepaid",
+          portal: c.billing !== "account" ? "—" : c.portal_enabled ? "Enabled" : "Off",
+        };
+      }),
+    [matching, shown]
+  );
 
   const custOrders = cust ? orders.filter((o) => o.customer_id === cust.id && !o.deleted_at && o.kind !== "split") : [];
   const custStatements = cust ? statements.filter((s) => s.customer_id === cust.id) : [];
@@ -228,6 +244,17 @@ export default function Customers() {
           {rows.length === 0 && (
             <div style={{ padding: 24, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
               No customers match these filters.
+            </div>
+          )}
+          {matching.length > rows.length && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--border-subtle)" }}>
+              <span className="tabular" style={{ fontSize: 12, color: "var(--text-faint)" }}>
+                Showing {rows.length.toLocaleString()} of {matching.length.toLocaleString()}
+              </span>
+              <div style={{ flex: 1 }} />
+              <Button variant="ghost" size="sm" iconLeft="chevron-down" onClick={() => setShown((n) => n + PAGE)}>
+                Show {Math.min(PAGE, matching.length - rows.length)} more
+              </Button>
             </div>
           )}
         </div>

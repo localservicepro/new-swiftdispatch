@@ -127,10 +127,10 @@ function DriverApp({ driver, onSignOut }: { driver: DriverUser; onSignOut: () =>
   const load = async () => {
     const [o, s, p] = await Promise.all([
       pageAll(() =>
-        supabase.from("orders").select("*").eq("driver_id", driver.id).is("deleted_at", null).order("id")
+        supabase.from("orders").select("*", { count: "exact" }).eq("driver_id", driver.id).is("deleted_at", null).order("id")
       ),
-      pageAll(() => supabase.from("suburbs").select("*").order("name")),
-      pageAll(() => supabase.from("products").select("*").order("sku")),
+      pageAll(() => supabase.from("suburbs").select("*", { count: "exact" }).order("name")),
+      pageAll(() => supabase.from("products").select("*", { count: "exact" }).order("sku")),
     ]);
     const mine = (o.data || []) as Order[];
     setOrders(mine);

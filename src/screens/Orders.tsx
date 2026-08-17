@@ -19,7 +19,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
 const PERIODS = ["Today", "This week", "This month", "All time"] as const;
 type Period = (typeof PERIODS)[number];
 
-const PAGE_SIZES = [50, 100, 250];
+const PAGE_SIZES = [100, 250, 500];
 
 /* The yard has ten thousand orders and adds a few dozen a day, so this screen
    is built around three rules that only start to matter at that size:

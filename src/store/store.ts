@@ -181,22 +181,22 @@ export const useApp = create<AppState>((set, get) => ({
       ] = await Promise.all([
         /* Anything that grows with the business is paged; the settings-sized
            tables are read in one go. See pageAll on why. */
-        pageAll(() => supabase.from("suburbs").select("*").order("name")),
+        pageAll(() => supabase.from("suburbs").select("*", { count: "exact" }).order("name")),
         supabase.from("product_categories").select("*").order("sort_order"),
-        pageAll(() => supabase.from("products").select("*").order("sku")),
-        pageAll(() => supabase.from("product_variants").select("*").order("id")),
+        pageAll(() => supabase.from("products").select("*", { count: "exact" }).order("sku")),
+        pageAll(() => supabase.from("product_variants").select("*", { count: "exact" }).order("id")),
         supabase.from("specials").select("*"),
         supabase.from("special_products").select("*"),
         supabase.from("team_members").select("*").order("created_at"),
         supabase.from("trucks").select("*").order("created_at"),
-        pageAll(() => supabase.from("customers").select("*").order("account_number")),
-        pageAll(() => supabase.from("customer_contacts").select("*").order("created_at").order("id")),
-        pageAll(() => supabase.from("customer_sites").select("*").order("id")),
+        pageAll(() => supabase.from("customers").select("*", { count: "exact" }).order("account_number")),
+        pageAll(() => supabase.from("customer_contacts").select("*", { count: "exact" }).order("created_at").order("id")),
+        pageAll(() => supabase.from("customer_sites").select("*", { count: "exact" }).order("id")),
         pageAll(() =>
-          supabase.from("orders").select("*").is("deleted_at", null).order("placed_at").order("id")
+          supabase.from("orders").select("*", { count: "exact" }).is("deleted_at", null).order("placed_at").order("id")
         ),
-        pageAll(() => supabase.from("order_items").select("*").order("created_at").order("id")),
-        pageAll(() => supabase.from("payments").select("*").order("created_at", { ascending: false }).order("id")),
+        pageAll(() => supabase.from("order_items").select("*", { count: "exact" }).order("created_at").order("id")),
+        pageAll(() => supabase.from("payments").select("*", { count: "exact" }).order("created_at", { ascending: false }).order("id")),
         supabase.from("statements").select("*").order("generated_at", { ascending: false }),
         supabase.from("business_settings").select("*").maybeSingle(),
         supabase.from("payment_settings").select("*").maybeSingle(),

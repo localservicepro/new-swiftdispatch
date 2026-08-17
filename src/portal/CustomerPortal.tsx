@@ -184,7 +184,7 @@ function PortalApp({ user, onSignOut }: { user: PortalUser; onSignOut: () => voi
       pageAll(() =>
         supabase
           .from("orders")
-          .select("*")
+          .select("*", { count: "exact" })
           .eq("customer_id", user.id)
           .is("deleted_at", null)
           .order("placed_at", { ascending: false })
