@@ -4,6 +4,7 @@ import { useUi } from "../store/ui";
 import { AUD, deliverySortKey, goodsOf, orderTotal, placedText, shortDate } from "../lib/domain";
 import type { Order, OrderStatus } from "../lib/types";
 import { Button, Card, DataTable, Input, Select } from "../design-system/components.js";
+import HistoryNotice from "./HistoryNotice";
 
 const STATUS_LABEL: Record<OrderStatus, string> = {
   requested: "Requested",
@@ -166,6 +167,7 @@ export default function Orders() {
           Export
         </Button>
       </div>
+      <HistoryNotice what="This list and its counts" />
       <div style={{ fontSize: 12, color: "var(--text-faint)" }}>
         Click any row to open it in the side panel — the list stays where it is.
       </div>

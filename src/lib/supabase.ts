@@ -84,13 +84,18 @@ export async function fetchIn<T = any>(
   ids: string[],
   chunk = 200
 ): Promise<T[]> {
+  const slices: string[][] = [];
+  for (let i = 0; i < ids.length; i += chunk) slices.push(ids.slice(i, i + chunk));
+
   const out: T[] = [];
-  for (let i = 0; i < ids.length; i += chunk) {
-    const slice = ids.slice(i, i + chunk);
-    const { data } = await pageAll<T>(() =>
-      supabase.from(table).select("*").in(column, slice).order("id")
+  for (let i = 0; i < slices.length; i += LANES) {
+    const batch = slices.slice(i, i + LANES);
+    const results = await Promise.all(
+      batch.map((slice) =>
+        pageAll<T>(() => supabase.from(table).select("*", { count: "exact" }).in(column, slice).order("id"))
+      )
     );
-    out.push(...(data || []));
+    for (const r of results) out.push(...(r.data || []));
   }
   return out;
 }

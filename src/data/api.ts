@@ -515,7 +515,12 @@ export function statementLines(customerId: string, startIso: string, endIso: str
 
 /* Print the account statement for one month. Nothing is recorded — printing a
    statement to look at it should not litter the customer's history. */
-export function printStatement(customerId: string, startIso: string, scope: "all" | "delivered" = "all") {
+/* A statement is a demand for money, and the ageing on it counts every unpaid
+   order on the account — not just the ones in the month being printed. Signing
+   in only loads the last two months, so this waits for the rest of the ledger
+   before it will draw one. Under a second in practice, and always right. */
+export async function printStatement(customerId: string, startIso: string, scope: "all" | "delivered" = "all") {
+  if (!S().historyLoaded) await S().loadHistory();
   const s = S();
   const customer = s.customers.find((c) => c.id === customerId);
   if (!customer) return;

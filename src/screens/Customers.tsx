@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store/store";
+import HistoryNotice from "./HistoryNotice";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
 import type { Customer } from "../lib/types";
@@ -372,7 +373,7 @@ export default function Customers() {
             setStatementModal(null);
           }}
           onPrint={() => {
-            printStatement(cust.id, statementModal.month, statementModal.scope);
+            void printStatement(cust.id, statementModal.month, statementModal.scope);
             setStatementModal(null);
           }}
         />
@@ -716,6 +717,7 @@ function CustomerDrawer(props: {
 
         {tab === "orders" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <HistoryNotice what="This account's orders and lifetime total" />
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--text-muted)" }}>
               <span>
                 <span className="tabular" style={{ color: "var(--text-primary)", fontWeight: 600 }}>{custOrders.length}</span> orders
@@ -850,7 +852,7 @@ function CustomerDrawer(props: {
                           variant="ghost"
                           size="sm"
                           iconLeft="printer"
-                          onClick={() => printStatement(cust.id, s.period_start.slice(0, 8) + "01", s.scope as "all" | "delivered")}
+                          onClick={() => void printStatement(cust.id, s.period_start.slice(0, 8) + "01", s.scope as "all" | "delivered")}
                         >
                           Print
                         </Button>
