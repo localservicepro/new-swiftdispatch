@@ -22,14 +22,26 @@ export default function Dashboard() {
   const rangeStart = startOf(period);
 
   const live = useMemo(() => orders.filter((o) => !o.deleted_at && o.kind !== "master"), [orders]);
-  const inRange = live.filter((o) => new Date(o.placed_at) >= rangeStart);
+  /* Ten thousand orders against two and a half thousand customers: looking the
+     customer up per order with .find() is twenty-three million comparisons, and
+     this screen does it four times over. One map, built once. */
+  const custById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const custOf = (o: { customer_id: string | null }) => (o.customer_id ? custById.get(o.customer_id) : undefined);
+  /* Memoised because the product-movement figures below hang off it: a fresh
+     array every render meant that memo never once hit, and it walks every line
+     item in the period. */
+  const inRange = useMemo(
+    () => live.filter((o) => new Date(o.placed_at) >= rangeStart),
+    [live, rangeStart.getTime()]
+  );
   const revenue = inRange.reduce((s, o) => s + orderTotal(o, orderItems[o.id] || [], suburbs, paySettings), 0);
   const onRoad = live.filter((o) => o.status === "en_route" || o.status === "loading").length;
   const unpaid = live
     .filter((o) => o.payment_status === "invoiced" || o.payment_status === "pending")
     .reduce((s, o) => s + orderTotal(o, orderItems[o.id] || [], suburbs, paySettings), 0);
 
-  const catName = (id: string | null) => categories.find((c) => c.id === id)?.name || "—";
+  const catById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
+  const catName = (id: string | null) => (id ? catById.get(id) : undefined) || "—";
 
   /* Product movement over the period, from real order lines. */
   const movement = useMemo(() => {
@@ -89,20 +101,18 @@ export default function Dashboard() {
       _order: o,
       time: o.delivery_window || "—",
       number: o.order_number,
-      customer: customers.find((c) => c.id === o.customer_id)?.name || o.walk_in_name || "Walk-in",
+      customer: custOf(o)?.name || o.walk_in_name || "Walk-in",
       suburb: suburbs.find((s) => s.id === o.suburb_id)?.name || "—",
       truck: trucks.find((t) => t.id === o.truck_id)?.rego || "Unassigned",
       total: AUD0(orderTotal(o, orderItems[o.id] || [], suburbs, paySettings)),
     }));
 
   /* Needs attention — real conditions, computed live. */
-  const noBilling = live.filter(
-    (o) => customers.find((c) => c.id === o.customer_id)?.billing === "account" && !o.payment_type
-  ).length;
+  const noBilling = live.filter((o) => custOf(o)?.billing === "account" && !o.payment_type).length;
   const noSuburb = live.filter((o) => o.method === "delivery" && !o.suburb_id && !["delivered", "cancelled"].includes(o.status)).length;
   const failedPayments = live.filter((o) => o.payment_status === "failed").length;
   const stopCreditOpen = live.filter((o) => {
-    const c = customers.find((x) => x.id === o.customer_id);
+    const c = custOf(o);
     return c && c.billing === "account" && (c.stop_credit || Number(c.balance) > Number(c.credit_limit)) && !["delivered", "cancelled"].includes(o.status);
   }).length;
   const splitsWaiting = live.filter((o) => o.kind === "split" && o.status === "loading" && !(o.truck_id && o.driver_id)).length;

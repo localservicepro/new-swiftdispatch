@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useApp } from "../store/store";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, dmy } from "../lib/domain";
@@ -30,9 +30,15 @@ export default function Payments() {
   const failed = payments.filter((x) => x.status === "failed").reduce((s, x) => s + Number(x.amount), 0);
   const onStatement = payments.filter((x) => x.status === "invoiced").reduce((s, x) => s + Number(x.amount), 0);
 
+  /* Both of these are looked up per row, and one of the counts below walks
+     every order — with ten thousand of them against two and a half thousand
+     customers that is tens of millions of comparisons a render. Two maps. */
+  const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders]);
+  const custById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+
   const payRows = payments.map((x) => {
-    const o = orders.find((ord) => ord.id === x.order_id);
-    const c = customers.find((cu) => cu.id === x.customer_id);
+    const o = x.order_id ? orderById.get(x.order_id) : undefined;
+    const c = x.customer_id ? custById.get(x.customer_id) : undefined;
     const blocked = c && c.billing === "account" && (c.stop_credit || Number(c.balance) > Number(c.credit_limit));
     return {
       date: dmy((x.paid_at || x.created_at).slice(0, 10)),
@@ -49,7 +55,7 @@ export default function Payments() {
   const eligibleOrders = orders.filter((o) => !o.deleted_at && o.payment_type && o.payment_type !== "prepaid");
   const yardOnAccount = eligibleOrders.filter((o) => o.kind === "yard_sale").length;
   const blockedNoRel = orders.filter(
-    (o) => !o.deleted_at && customers.find((c) => c.id === o.customer_id)?.billing === "account" && !o.payment_type
+    (o) => !o.deleted_at && !o.payment_type && (o.customer_id ? custById.get(o.customer_id)?.billing : null) === "account"
   ).length;
 
   return (
