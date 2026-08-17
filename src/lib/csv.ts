@@ -108,6 +108,22 @@ export function readCsvTable(text: string): CsvTable {
   return { headers, rows: rows.filter((r) => Object.values(r).some((v) => v !== "")) };
 }
 
+/* Money as other systems write it: "$60", "AU$80", "AU $145", "AUD 70",
+   "AU70.00", "1,250.00" or a plain "225". The currency marker and separators
+   come off, and whatever is left has to be a number — so "forty" is still
+   rejected rather than quietly becoming zero. */
+export function readMoney(v: string | null | undefined): number | null {
+  const cleaned = String(v ?? "")
+    .trim()
+    .replace(/^(aud|usd|nzd|au|us|nz|a)?\s*\$\s*/i, "")
+    .replace(/^(aud|usd|nzd|au|nz)\s*/i, "")
+    .replace(/\s*(aud|usd|nzd)$/i, "")
+    .replace(/[,\s]/g, "");
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function downloadCsv(filename: string, csv: string) {
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");

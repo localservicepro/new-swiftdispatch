@@ -8,7 +8,7 @@
 
 import { supabase } from "../lib/supabase";
 import { useApp } from "../store/store";
-import { downloadCsv, readCsvTable, toCsv } from "../lib/csv";
+import { downloadCsv, readCsvTable, readMoney, toCsv } from "../lib/csv";
 import type { Suburb } from "../lib/types";
 
 const S = () => useApp.getState();
@@ -58,17 +58,12 @@ export interface SuburbImportPlan {
 }
 
 const yes = (v: string) => /^(y|yes|true|1)$/i.test(v.trim());
-const num = (v: string) => {
-  const n = Number(String(v).replace(/[$,\s]/g, ""));
-  return Number.isFinite(n) ? n : null;
-};
-
 const KNOWN = new Set([
   "suburb", "name", "suburbname", "town", "locality",
   "postcode", "postalcode", "zip",
   "state",
   "deliveryfee", "fee", "rate", "deliveryrate",
-  "active", "enabled",
+  "active", "enabled", "isactive",
 ]);
 
 const pick = (row: Record<string, string>, ...keys: string[]) => {
@@ -135,7 +130,7 @@ export function planSuburbImport(text: string): SuburbImportPlan {
           warnings.push(`Clears the ${existing.name} rate of $${Number(existing.delivery_fee).toFixed(2)} — orders here will be blocked.`);
         else if (!existing) warnings.push("No rate, so orders to this suburb are blocked until one is set.");
       } else {
-        const f = num(raw);
+        const f = readMoney(raw);
         if (f === null) return reject(`"${raw}" is not a delivery fee.`);
         if (f < 0) return reject(`A delivery fee cannot be negative (${raw}).`);
         values.delivery_fee = f;
@@ -146,7 +141,7 @@ export function planSuburbImport(text: string): SuburbImportPlan {
       warnings.push("No rate, so orders to this suburb are blocked until one is set.");
     }
 
-    const activeRaw = pick(row, "active", "enabled");
+    const activeRaw = pick(row, "active", "enabled", "isactive");
     if (activeRaw) values.active = yes(activeRaw);
     else if (!existing) values.active = true;
 

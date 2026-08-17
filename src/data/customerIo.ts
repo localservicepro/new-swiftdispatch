@@ -12,7 +12,7 @@
 
 import { supabase } from "../lib/supabase";
 import { useApp } from "../store/store";
-import { downloadCsv, readCsvTable, toCsv } from "../lib/csv";
+import { downloadCsv, readCsvTable, readMoney, toCsv } from "../lib/csv";
 import type { Customer, CustomerContact, CustomerEntity, CustomerTier } from "../lib/types";
 
 const S = () => useApp.getState();
@@ -99,11 +99,6 @@ export interface ImportPlan {
 }
 
 const yes = (v: string) => /^(y|yes|true|1)$/i.test(v.trim());
-const num = (v: string) => {
-  const n = Number(String(v).replace(/[$,\s]/g, ""));
-  return Number.isFinite(n) ? n : null;
-};
-
 const ENTITIES: CustomerEntity[] = ["Individual", "Sole trader", "Company"];
 const TIERS: CustomerTier[] = ["Retail", "Trade"];
 
@@ -209,14 +204,14 @@ export function planCustomerImport(text: string): ImportPlan {
 
     const termsRaw = pick(row, "termsdays", "terms");
     if (termsRaw) {
-      const t = num(termsRaw);
+      const t = readMoney(termsRaw);
       if (t === null) return reject(`"${termsRaw}" is not a number of days.`);
       values.terms_days = t;
     } else if (!existing && onAccount) values.terms_days = 30;
 
     const limitRaw = pick(row, "creditlimit", "limit");
     if (limitRaw) {
-      const l = num(limitRaw);
+      const l = readMoney(limitRaw);
       if (l === null) return reject(`"${limitRaw}" is not a credit limit.`);
       values.credit_limit = l;
     } else if (!existing) values.credit_limit = 0;
@@ -225,7 +220,7 @@ export function planCustomerImport(text: string): ImportPlan {
        account, but it will not silently rewrite what an existing account owes. */
     const balanceRaw = pick(row, "balance");
     if (balanceRaw) {
-      const b = num(balanceRaw);
+      const b = readMoney(balanceRaw);
       if (b === null) return reject(`"${balanceRaw}" is not a balance.`);
       if (existing) {
         if (Math.abs(b - Number(existing.balance)) > 0.005)

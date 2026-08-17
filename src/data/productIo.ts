@@ -11,7 +11,7 @@
 
 import { supabase } from "../lib/supabase";
 import { useApp } from "../store/store";
-import { downloadCsv, readCsvTable, toCsv } from "../lib/csv";
+import { downloadCsv, readCsvTable, readMoney, toCsv } from "../lib/csv";
 import { UNITS } from "../lib/domain";
 import type { Product, ProductUnit } from "../lib/types";
 
@@ -93,11 +93,6 @@ export interface ProductImportPlan {
 }
 
 const yes = (v: string) => /^(y|yes|true|1)$/i.test(v.trim());
-const num = (v: string) => {
-  const n = Number(String(v).replace(/[$,\s]/g, ""));
-  return Number.isFinite(n) ? n : null;
-};
-
 const KNOWN = new Set([
   "sku", "code", "productcode",
   "name", "product", "productname", "description",
@@ -106,7 +101,7 @@ const KNOWN = new Set([
   "fractional", "divisible",
   "price", "unitprice",
   "stock", "onhand", "qty", "quantity",
-  "active", "enabled",
+  "active", "enabled", "isactive",
   "variantof", "parent", "parentsku",
   "imageurl", "image",
 ]);
@@ -172,10 +167,10 @@ export function planProductImport(text: string): ProductImportPlan {
     seen.set(sku, line);
 
     const priceRaw = pick(row, "price", "unitprice");
-    const price = priceRaw ? num(priceRaw) : null;
+    const price = priceRaw ? readMoney(priceRaw) : null;
     if (priceRaw && price === null) return reject(`"${priceRaw}" is not a price.`);
     const stockRaw = pick(row, "stock", "onhand", "qty", "quantity");
-    const stock = stockRaw ? num(stockRaw) : null;
+    const stock = stockRaw ? readMoney(stockRaw) : null;
     if (stockRaw && stock === null) return reject(`"${stockRaw}" is not a stock figure.`);
 
     /* ---- a variant row ---- */
@@ -234,7 +229,7 @@ export function planProductImport(text: string): ProductImportPlan {
     if (stock !== null) values.stock = stock;
     else if (!existing) values.stock = 0;
 
-    const activeRaw = pick(row, "active", "enabled");
+    const activeRaw = pick(row, "active", "enabled", "isactive");
     if (activeRaw) values.active = yes(activeRaw);
     else if (!existing) values.active = true;
 
