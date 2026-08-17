@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { applyProductImport, exportProductsCsv, planProductImport, type ProductImportPlan } from "../data/productIo";
 import { useApp } from "../store/store";
 import { AUD, qtyText, soldIn, unitFor, unitOf, unitPrice, UNITS, dmy } from "../lib/domain";
 import type { Product, ProductUnit } from "../lib/types";
@@ -27,6 +28,9 @@ export default function Products() {
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("All categories");
   const [csvNote, setCsvNote] = useState<{ title: string; body: string } | null>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importPlan, setImportPlan] = useState<{ plan: ProductImportPlan; file: string } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [form, setForm] = useState({ ...BLANK_FORM });
   const [newCatName, setNewCatName] = useState("");
   const [sp, setSp] = useState({ name: "", kind: "percent" as "percent" | "amount", value: "", scope: "products" as "all" | "category" | "products", categoryId: "", ids: [] as string[], from: "", to: "" });
@@ -78,29 +82,37 @@ export default function Products() {
           variant="underline"
         />
         <div style={{ flex: 1 }} />
-        <Button
-          variant="ghost"
-          size="sm"
-          iconLeft="download"
-          onClick={() =>
-            setCsvNote({
-              title: "Import expects the export's own columns",
-              body: "sku, name, category, unit, fractional, price, stock, variant_of. Rows are matched on SKU — an existing SKU updates that product, a new one creates it, and nothing is deleted. A category named in the file that does not exist yet is created.",
-            })
-          }
-        >
+        <Button variant="ghost" size="sm" iconLeft="download" onClick={() => fileRef.current?.click()}>
           Import
         </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            setCsvNote(null);
+            try {
+              setImportPlan({ plan: planProductImport(await file.text()), file: file.name });
+            } catch (err) {
+              app.toast({ tone: "danger", title: "Could not read that file", description: String((err as Error).message) });
+            }
+          }}
+        />
         <Button
           variant="ghost"
           size="sm"
           iconLeft="external-link"
-          onClick={() =>
+          onClick={() => {
+            const n = exportProductsCsv();
             setCsvNote({
-              title: `Exported ${products.length} products`,
-              body: `products-${dmy(today)}.csv — columns: sku, name, category, unit, fractional, price, stock, variant_of. Variants export as their own rows so the file round-trips through Import unchanged.`,
-            })
-          }
+              title: `Exported ${n} ${n === 1 ? "row" : "rows"}`,
+              body: "Columns: sku, name, category, unit, fractional, price, stock, active, variant_of, image url. Variants export as their own rows, so the file round-trips through Import unchanged.",
+            });
+          }}
         >
           Export
         </Button>
@@ -110,6 +122,34 @@ export default function Products() {
         <Alert tone="info" title={csvNote.title}>
           {csvNote.body}
         </Alert>
+      )}
+
+      {importPlan && (
+        <ProductImportModal
+          plan={importPlan.plan}
+          fileName={importPlan.file}
+          busy={importing}
+          onClose={() => setImportPlan(null)}
+          onConfirm={async () => {
+            setImporting(true);
+            const r = await applyProductImport(importPlan.plan);
+            setImporting(false);
+            setImportPlan(null);
+            if (r.failed.length) app.toast({ tone: "danger", title: "Import did not finish", description: r.failed[0] });
+            else
+              app.toast({
+                tone: "success",
+                title: `${r.created} added, ${r.updated} updated`,
+                description: [
+                  r.variants ? `${r.variants} variants` : null,
+                  r.categories ? `${r.categories} new categories` : null,
+                  importPlan.plan.rejects ? `${importPlan.plan.rejects} rows skipped` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined,
+              });
+          }}
+        />
       )}
 
       {tab === "catalogue" && (
@@ -561,3 +601,134 @@ function VarInput({ value, onChange, placeholder, mono, right }: { value: string
 
 void Textarea;
 void qtyText;
+
+/* The import preview. Same bargain as the customer importer: reading a file
+   only produces a plan, and the plan is shown in full before a single row is
+   written. */
+function ProductImportModal({
+  plan,
+  fileName,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  plan: ProductImportPlan;
+  fileName: string;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const [show, setShow] = useState<"all" | "reject" | "warn">(plan.rejects ? "reject" : "all");
+  const rows = plan.rows.filter((r) =>
+    show === "reject" ? r.action === "reject" : show === "warn" ? r.warnings.length > 0 : true
+  );
+  const willWrite = plan.creates + plan.updates + plan.variants;
+
+  const label: Record<string, string> = {
+    create: "New",
+    update: "Update",
+    "create-variant": "+ Variant",
+    "update-variant": "Variant",
+    reject: "Skip",
+  };
+  const tone = (a: string) =>
+    a === "reject" ? "var(--feedback-danger)" : a === "create" ? "var(--feedback-success)" : "var(--brand-primary)";
+
+  return (
+    <div
+      onClick={busy ? undefined : onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "rgba(6,7,15,.72)", backdropFilter: "blur(10px) saturate(140%)" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "min(760px,100%)", maxHeight: "86vh", borderRadius: 16, background: "var(--surface-card)", border: "1px solid var(--border-default)", boxShadow: "0 24px 64px rgba(0,0,0,.6)", display: "flex", flexDirection: "column" }}
+      >
+        <div style={{ padding: 16, borderBottom: "1px solid var(--border-subtle)" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Import products</div>
+          <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 3 }}>
+            {fileName} — {plan.rows.length} {plan.rows.length === 1 ? "row" : "rows"} read. Nothing is saved until you
+            confirm.
+          </div>
+        </div>
+
+        <div style={{ padding: "12px 16px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {[
+            { label: "New", value: plan.creates, colour: "var(--feedback-success)" },
+            { label: "Updated", value: plan.updates, colour: "var(--brand-primary)" },
+            { label: "Variants", value: plan.variants, colour: "var(--brand-primary)" },
+            { label: "Skipped", value: plan.rejects, colour: plan.rejects ? "var(--feedback-danger)" : "var(--text-faint)" },
+          ].map((t) => (
+            <div key={t.label} style={{ flex: "1 1 110px", padding: "9px 11px", borderRadius: 8, background: "var(--surface-raised)", border: "1px solid var(--border-subtle)" }}>
+              <div className="tabular" style={{ fontSize: 18, fontWeight: 600, color: t.colour }}>{t.value}</div>
+              <div style={{ fontSize: 11, color: "var(--text-faint)" }}>{t.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {plan.newCategories.length > 0 && (
+          <div style={{ padding: "12px 16px 0" }}>
+            <Alert tone="info" title={`${plan.newCategories.length} new ${plan.newCategories.length === 1 ? "category" : "categories"} will be created`}>
+              {plan.newCategories.join(", ")}
+            </Alert>
+          </div>
+        )}
+
+        {plan.unknownColumns.length > 0 && (
+          <div style={{ padding: "12px 16px 0" }}>
+            <Alert tone="info" title="Columns that were ignored">
+              {plan.unknownColumns.join(", ")} — these do not match any product field, so they were left alone.
+            </Alert>
+          </div>
+        )}
+
+        <div style={{ padding: "12px 16px 0" }}>
+          <Tabs
+            items={[
+              { id: "all", label: "Every row", count: plan.rows.length },
+              { id: "reject", label: "Skipped", count: plan.rejects },
+              { id: "warn", label: "Warnings", count: plan.warnings },
+            ]}
+            activeId={show}
+            onSelect={(id: string) => setShow(id as any)}
+            variant="underline"
+          />
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px", display: "flex", flexDirection: "column", gap: 4 }}>
+          {rows.map((r) => (
+            <div key={r.line} style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "7px 9px", borderRadius: 7, background: "var(--surface-raised)" }}>
+              <span className="tabular" style={{ flexShrink: 0, width: 34, fontSize: 11, color: "var(--text-faint)" }}>{r.line}</span>
+              <span style={{ flexShrink: 0, width: 62, fontSize: 11, fontWeight: 600, color: tone(r.action) }}>{label[r.action]}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: "var(--text-primary)" }}>
+                  {r.name || "(no name)"}
+                  {r.sku ? <span style={{ fontFamily: "'JetBrains Mono',monospace", color: "var(--text-faint)" }}> · {r.sku}</span> : null}
+                  {r.parentSku ? <span style={{ color: "var(--text-faint)" }}> → {r.parentSku}</span> : null}
+                </div>
+                {r.reason && <div style={{ fontSize: 11, color: "var(--feedback-danger)", textWrap: "pretty" as any }}>{r.reason}</div>}
+                {r.warnings.map((w) => (
+                  <div key={w} style={{ fontSize: 11, color: "var(--attention)", textWrap: "pretty" as any }}>{w}</div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {rows.length === 0 && (
+            <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>Nothing here.</div>
+          )}
+        </div>
+
+        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+            Rows are matched on SKU. Nothing is deleted — a product left out of the file is untouched.
+          </span>
+          <Button variant="ghost" size="md" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="md" iconLeft="download" disabled={busy || willWrite === 0} onClick={onConfirm}>
+            {busy ? "Importing…" : willWrite === 0 ? "Nothing to import" : `Import ${willWrite} ${willWrite === 1 ? "row" : "rows"}`}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
