@@ -37,6 +37,7 @@ export const CUSTOMER_COLUMNS = [
   "Contact name",
   "Contact phone",
   "Contact email",
+  "Contact of",
 ];
 
 /* ---------- export ---------- */
@@ -44,11 +45,12 @@ export const CUSTOMER_COLUMNS = [
 export function exportCustomersCsv(): number {
   const s = S();
   const suburbName = (id: string | null) => s.suburbs.find((x) => x.id === id)?.name || "";
-  const rows = [...s.customers]
+  const rows: (string | number)[][] = [];
+  [...s.customers]
     .sort((a, b) => a.account_number.localeCompare(b.account_number, undefined, { numeric: true }))
-    .map((c) => {
+    .forEach((c) => {
       const contact = c.contacts?.find((ct) => ct.roles?.includes("Orders")) || c.contacts?.[0];
-      return [
+      rows.push([
         c.account_number,
         c.name,
         c.entity,
@@ -67,7 +69,15 @@ export function exportCustomersCsv(): number {
         contact?.name || "",
         contact?.phone || "",
         contact?.email || "",
-      ];
+        "",
+      ]);
+      /* Everyone else on the account gets a row of their own, straight after
+         it, the way a product's variants do. */
+      (c.contacts || [])
+        .filter((ct) => ct.id !== contact?.id)
+        .forEach((ct) => {
+          rows.push(["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ct.name, ct.phone || "", ct.email || "", c.account_number]);
+        });
     });
   const today = new Date().toISOString().slice(0, 10);
   downloadCsv(`customers-${today}.csv`, toCsv(CUSTOMER_COLUMNS, rows));
@@ -78,7 +88,7 @@ export function exportCustomersCsv(): number {
 
 export interface ImportRow {
   line: number;
-  action: "create" | "update" | "reject";
+  action: "create" | "update" | "contact" | "reject";
   name: string;
   accountNumber: string;
   /* Set for an update — the account this row will be written onto. */
@@ -87,12 +97,15 @@ export interface ImportRow {
   warnings: string[];
   values: Partial<Customer>;
   contact: { name: string; phone: string; email: string } | null;
+  /* Set on a row that is only a contact — the account it belongs to. */
+  contactOf?: string;
 }
 
 export interface ImportPlan {
   rows: ImportRow[];
   creates: number;
   updates: number;
+  contacts: number;
   rejects: number;
   warnings: number;
   unknownColumns: string[];
@@ -128,6 +141,7 @@ const KNOWN = new Set([
   "billingsuburb", "suburb",
   "portalenabled", "portal", "portalpin", "pin",
   "contactname", "contactphone", "phone", "contactemail", "email",
+  "contactof", "contactfor", "belongsto",
 ]);
 
 const pick = (row: Record<string, string>, ...keys: string[]) => {
@@ -144,8 +158,10 @@ export function planCustomerImport(text: string): ImportPlan {
   });
 
   /* Account numbers already claimed inside this file, so two rows cannot both
-     create the same account. */
+     create the same account, and so a contact row can name an account that
+     only exists further up the same file. */
   const seen = new Map<string, number>();
+  const inFile = new Set<string>();
 
   const out: ImportRow[] = rows.map((row, i) => {
     const line = i + 2; // +1 for the header, +1 for 1-based line numbers
@@ -169,10 +185,32 @@ export function planCustomerImport(text: string): ImportPlan {
       contact,
     });
 
+    /* ---- a contact row ---- */
+    const contactOf = pick(row, "contactof", "contactfor", "belongsto").trim();
+    if (contactOf) {
+      if (!contact?.name && !name) return reject("A contact row needs a contact name.");
+      const known = inFile.has(contactOf) || s.customers.some((c) => c.account_number === contactOf);
+      if (!known)
+        return reject(`No customer with account ${contactOf} to attach this contact to — put that customer above it, or import it first.`);
+      return {
+        line,
+        action: "contact",
+        name: contact?.name || name,
+        accountNumber: contactOf,
+        contactOf,
+        warnings,
+        values: {},
+        contact: contact || { name, phone: pick(row, "contactphone", "phone").trim(), email: pick(row, "contactemail", "email").trim() },
+      };
+    }
+
     if (!name) return reject("No customer name.");
     if (accountNumber && seen.has(accountNumber))
       return reject(`Account ${accountNumber} appears twice in this file (also on line ${seen.get(accountNumber)}).`);
-    if (accountNumber) seen.set(accountNumber, line);
+    if (accountNumber) {
+      seen.set(accountNumber, line);
+      inFile.add(accountNumber);
+    }
 
     const existing = accountNumber ? s.customers.find((c) => c.account_number === accountNumber) : undefined;
 
@@ -274,6 +312,7 @@ export function planCustomerImport(text: string): ImportPlan {
     rows: out,
     creates: out.filter((r) => r.action === "create").length,
     updates: out.filter((r) => r.action === "update").length,
+    contacts: out.filter((r) => r.action === "contact").length,
     rejects: out.filter((r) => r.action === "reject").length,
     warnings: out.reduce((t, r) => t + r.warnings.length, 0),
     unknownColumns,
@@ -297,6 +336,12 @@ export async function applyCustomerImport(plan: ImportPlan): Promise<ImportResul
      number the yard is about to hand out. */
   let nextAccount = Math.max(10800, ...s.customers.map((c) => Number(c.account_number) || 0));
 
+  /* Account number -> customer id, filled in as accounts are written so the
+     contact rows that follow can find the account even when this same file
+     created it. */
+  const idByAccount = new Map<string, string>();
+  s.customers.forEach((c) => idByAccount.set(c.account_number, c.id));
+
   const newCustomers: Customer[] = [];
   const patches: { id: string; patch: Partial<Customer> }[] = [];
   const newContacts: CustomerContact[] = [];
@@ -304,7 +349,10 @@ export async function applyCustomerImport(plan: ImportPlan): Promise<ImportResul
   for (const row of plan.rows) {
     if (row.action === "reject") continue;
 
+    if (row.action === "contact") continue;
+
     if (row.action === "update" && row.existingId) {
+      idByAccount.set(row.accountNumber, row.existingId);
       patches.push({ id: row.existingId, patch: row.values });
       const target = s.customers.find((c) => c.id === row.existingId);
       /* Only add a contact the account hasn't already got — re-importing the
@@ -325,6 +373,7 @@ export async function applyCustomerImport(plan: ImportPlan): Promise<ImportResul
     const id = uuid();
     const account = row.accountNumber || String((nextAccount += 7));
     if (!row.accountNumber) nextAccount = Number(account);
+    idByAccount.set(account, id);
     const cust: Customer = {
       id,
       account_number: account,
@@ -357,6 +406,28 @@ export async function applyCustomerImport(plan: ImportPlan): Promise<ImportResul
         roles: ["Orders"],
       });
     }
+  }
+
+  /* Extra contacts last, once every account they might name exists. */
+  for (const row of plan.rows) {
+    if (row.action !== "contact" || !row.contact || !row.contactOf) continue;
+    const customerId = idByAccount.get(row.contactOf);
+    if (!customerId) {
+      result.failed.push({ line: row.line, name: row.contact.name, error: `Account ${row.contactOf} was not written.` });
+      continue;
+    }
+    const target = s.customers.find((c) => c.id === customerId);
+    /* Re-importing the same file should not stack duplicate people onto an
+       account, so skip a name it already has. */
+    if (target?.contacts?.some((ct) => ct.name.toLowerCase() === row.contact!.name.toLowerCase())) continue;
+    newContacts.push({
+      id: uuid(),
+      customer_id: customerId,
+      name: row.contact.name,
+      phone: row.contact.phone || null,
+      email: row.contact.email || null,
+      roles: ["Orders"],
+    });
   }
 
   if (newCustomers.length) {

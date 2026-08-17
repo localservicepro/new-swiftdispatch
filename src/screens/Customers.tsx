@@ -294,8 +294,8 @@ export default function Customers() {
           tiles={[
             { label: "New", value: importPlan.plan.creates, tone: "good" },
             { label: "Updated", value: importPlan.plan.updates, tone: "info" },
+            { label: "Contacts", value: importPlan.plan.contacts, tone: "info" },
             { label: "Skipped", value: importPlan.plan.rejects, tone: "bad" },
-            { label: "Warnings", value: importPlan.plan.warnings, tone: "warn" },
           ]}
           notes={
             importPlan.plan.unknownColumns.length
@@ -304,15 +304,17 @@ export default function Customers() {
           }
           rows={importPlan.plan.rows.map<PreviewRow>((r) => ({
             line: r.line,
-            action: r.action === "reject" ? "Skip" : r.action === "create" ? "New" : "Update",
+            action: r.action === "reject" ? "Skip" : r.action === "create" ? "New" : r.action === "contact" ? "+ Contact" : "Update",
             tone: r.action === "reject" ? "bad" : r.action === "create" ? "good" : "info",
             label: r.name,
             code: r.accountNumber || undefined,
+            trail: r.action === "contact" ? "→ account" : undefined,
             reason: r.reason,
             warnings: r.warnings,
           }))}
-          footNote="Rows are matched on account number. A blank account number always makes a new customer."
-          writeCount={importPlan.plan.creates + importPlan.plan.updates}
+          actionWidth={68}
+          footNote="Rows are matched on account number. A blank account number always makes a new customer; a row with Contact of adds another person to that account."
+          writeCount={importPlan.plan.creates + importPlan.plan.updates + importPlan.plan.contacts}
           onClose={() => setImportPlan(null)}
           onConfirm={async () => {
             setImporting(true);
