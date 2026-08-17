@@ -8,6 +8,7 @@
 
 import { supabase } from "../lib/supabase";
 import { useApp } from "../store/store";
+import { suburbReferences } from "./api";
 import { downloadCsv, readCsvTable, readMoney, toCsv } from "../lib/csv";
 import type { Suburb } from "../lib/types";
 
@@ -48,6 +49,17 @@ export interface SuburbImportRow {
   existingId?: string;
 }
 
+/* A suburb the yard already has that this file does not mention — the sample
+   data, usually, on the first real import. */
+export interface MissingSuburb {
+  id: string;
+  name: string;
+  postcode: string;
+  /* Orders, customers and sites still pointing at it. Anything above zero and
+     the database will not let it go, so it gets switched off instead. */
+  references: number;
+}
+
 export interface SuburbImportPlan {
   rows: SuburbImportRow[];
   creates: number;
@@ -55,6 +67,7 @@ export interface SuburbImportPlan {
   rejects: number;
   warnings: number;
   unknownColumns: string[];
+  missing: MissingSuburb[];
 }
 
 const yes = (v: string) => /^(y|yes|true|1)$/i.test(v.trim());
@@ -156,6 +169,11 @@ export function planSuburbImport(text: string): SuburbImportPlan {
     };
   });
 
+  const inFile = new Set(out.filter((r) => r.action !== "reject").map((r) => key(r.name, r.postcode)));
+  const missing: MissingSuburb[] = s.suburbs
+    .filter((x) => !inFile.has(key(x.name, x.postcode)))
+    .map((x) => ({ id: x.id, name: x.name, postcode: x.postcode, references: suburbReferences(x.id).total }));
+
   return {
     rows: out,
     creates: out.filter((r) => r.action === "create").length,
@@ -163,17 +181,25 @@ export function planSuburbImport(text: string): SuburbImportPlan {
     rejects: out.filter((r) => r.action === "reject").length,
     warnings: out.reduce((t, r) => t + r.warnings.length, 0),
     unknownColumns,
+    missing,
   };
 }
 
 export interface SuburbImportResult {
   created: number;
   updated: number;
+  deleted: number;
+  deactivated: number;
   failed: string[];
 }
 
-export async function applySuburbImport(plan: SuburbImportPlan): Promise<SuburbImportResult> {
-  const result: SuburbImportResult = { created: 0, updated: 0, failed: [] };
+/* removeMissing clears out what this file is replacing — the sample suburbs on
+   a first real import. A suburb nothing points at is deleted outright; one that
+   an order or a customer still references cannot be, so it is switched off
+   instead, which takes it out of every picker while leaving the history that
+   depends on it readable. */
+export async function applySuburbImport(plan: SuburbImportPlan, removeMissing = false): Promise<SuburbImportResult> {
+  const result: SuburbImportResult = { created: 0, updated: 0, deleted: 0, deactivated: 0, failed: [] };
 
   const inserts = plan.rows.filter((r) => r.action === "create").map((r) => r.values);
   if (inserts.length) {
@@ -187,6 +213,21 @@ export async function applySuburbImport(plan: SuburbImportPlan): Promise<SuburbI
     const { error } = await supabase.from("suburbs").update(r.values).eq("id", r.existingId);
     if (error) result.failed.push(`${r.name}: ${error.message}`);
     else result.updated += 1;
+  }
+
+  if (removeMissing && plan.missing.length) {
+    const droppable = plan.missing.filter((m) => m.references === 0).map((m) => m.id);
+    const keepable = plan.missing.filter((m) => m.references > 0).map((m) => m.id);
+    if (droppable.length) {
+      const { error } = await supabase.from("suburbs").delete().in("id", droppable);
+      if (error) result.failed.push(`Removing old suburbs: ${error.message}`);
+      else result.deleted = droppable.length;
+    }
+    if (keepable.length) {
+      const { error } = await supabase.from("suburbs").update({ active: false }).in("id", keepable);
+      if (error) result.failed.push(`Switching off old suburbs: ${error.message}`);
+      else result.deactivated = keepable.length;
+    }
   }
 
   await S().loadAll();

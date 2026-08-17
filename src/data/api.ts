@@ -792,9 +792,38 @@ export async function addSuburb(row: { name: string; postcode: string; state: st
   set((st) => ({ suburbs: [...st.suburbs, data as Suburb].sort((a, b) => a.name.localeCompare(b.name)) }));
 }
 
-export function removeSuburb(id: string) {
-  set((s) => ({ suburbs: s.suburbs.filter((x) => x.id !== id) }));
-  persist(supabase.from("suburbs").delete().eq("id", id), "the suburb");
+/* Everything that still points at a suburb. Orders in any state count, not
+   just open ones: a delivered order keeps its suburb so the delivery fee on
+   its invoice can still be explained, and the database will refuse to drop a
+   row underneath it. */
+export function suburbReferences(id: string): { orders: number; customers: number; sites: number; total: number } {
+  const s = S();
+  const orders = s.orders.filter((o) => o.suburb_id === id).length;
+  const customers = s.customers.filter((c) => c.billing_suburb_id === id).length;
+  const sites = s.customers.reduce((t, c) => t + (c.sites || []).filter((x) => x.suburb_id === id).length, 0);
+  return { orders, customers, sites, total: orders + customers + sites };
+}
+
+export async function removeSuburb(id: string) {
+  const s = S();
+  const before = s.suburbs;
+  set(() => ({ suburbs: before.filter((x) => x.id !== id) }));
+  const { error } = await supabase.from("suburbs").delete().eq("id", id);
+  if (!error) return true;
+  /* Put it back rather than leaving the screen claiming a deletion that the
+     database rejected. */
+  set(() => ({ suburbs: before }));
+  const refs = suburbReferences(id);
+  s.toast({
+    tone: "danger",
+    title: "That suburb is still in use",
+    description: refs.total
+      ? `${[refs.orders && `${refs.orders} orders`, refs.customers && `${refs.customers} customers`, refs.sites && `${refs.sites} delivery sites`]
+          .filter(Boolean)
+          .join(", ")} still point at it. Switch it off instead — it stops being offered on new orders and the history stays readable.`
+      : error.message,
+  });
+  return false;
 }
 
 /* ---------- settings ---------- */

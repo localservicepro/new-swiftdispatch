@@ -45,6 +45,7 @@ export default function ImportPreview({
   tiles,
   notes = [],
   rows,
+  extra,
   footNote,
   writeCount,
   busy,
@@ -58,6 +59,8 @@ export default function ImportPreview({
   tiles: PreviewTile[];
   notes?: { title: string; body: React.ReactNode }[];
   rows: PreviewRow[];
+  /* An option belonging to one importer — the suburb clear-out, say. */
+  extra?: React.ReactNode;
   footNote: string;
   writeCount: number;
   busy: boolean;
@@ -185,6 +188,8 @@ export default function ImportPreview({
             <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>Nothing here.</div>
           )}
         </div>
+
+        {extra && <div style={{ padding: "12px 16px 0" }}>{extra}</div>}
 
         <div
           style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
