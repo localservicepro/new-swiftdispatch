@@ -123,7 +123,11 @@ export const blankDraft = (letter = "A"): DeliveryDraft => ({
 });
 
 let toastId = 1;
-/* The history pass, while it is running, so concurrent callers join it. */
+/* The passes while they are running, so a second caller joins the one already
+   going rather than starting its own. Reloading the page mid-load, or any two
+   things asking at once, was running the whole thing twice over — every table,
+   every page, every chunk, doubled. */
+let inFlightLoad: Promise<void> | null = null;
 let inFlightHistory: Promise<void> | null = null;
 
 export const useApp = create<AppState>((set, get) => ({
@@ -177,7 +181,9 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   loadAll: async () => {
+    if (inFlightLoad) return inFlightLoad;
     set({ loading: true });
+    inFlightLoad = (async () => {
     try {
       const [
         suburbs,
@@ -306,7 +312,10 @@ export const useApp = create<AppState>((set, get) => ({
       });
     } finally {
       set({ loading: false });
+      inFlightLoad = null;
     }
+    })();
+    return inFlightLoad;
   },
 
   /* Everything the working window left behind: the settled orders older than
@@ -341,11 +350,24 @@ export const useApp = create<AppState>((set, get) => ({
       const have = new Set(get().orders.map((o) => o.id));
       const older = (data || []).filter((o) => !have.has(o.id));
 
-      const items = await fetchIn<OrderItem>("order_items", "order_id", older.map((o) => o.id));
+      /* The lines for those orders, read by paging the table rather than by
+         naming seven thousand ids. Asking for them by id meant thirty-six
+         requests each carrying a seven-kilobyte list of UUIDs; paging is
+         seventeen requests of a thousand rows, six at a time, and the ones
+         already loaded are simply skipped on the way in. */
+      const { data: allItems, error: itemsError } = await pageAll<OrderItem>(() =>
+        supabase.from("order_items").select("*", { count: "exact" }).order("created_at").order("id")
+      );
+      if (itemsError) throw itemsError;
 
       set((s) => {
         const byOrder = { ...s.orderItems };
-        for (const i of items) (byOrder[i.order_id] = byOrder[i.order_id] || []).push(i);
+        const seen = new Set<string>();
+        for (const lines of Object.values(byOrder)) for (const i of lines) seen.add(i.id);
+        for (const i of allItems || []) {
+          if (seen.has(i.id)) continue;
+          (byOrder[i.order_id] = byOrder[i.order_id] || []).push(i);
+        }
         return {
           orders: [...s.orders, ...older].sort(
             (a, b) => new Date(a.placed_at).getTime() - new Date(b.placed_at).getTime()
