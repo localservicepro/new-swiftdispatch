@@ -20,6 +20,7 @@ import {
   WINDOWS_60,
 } from "../lib/domain";
 import { PAYMENT_METHODS } from "../lib/types";
+import type { OrderItem } from "../lib/types";
 import { addContact, createOrder } from "../data/api";
 import {
   Alert,
@@ -37,6 +38,7 @@ import {
 } from "../design-system/components.js";
 import AddressSearch from "./AddressSearch";
 import ProductCard from "./ProductCard";
+import CategoryPicker from "./CategoryPicker";
 
 /* Product cards drawn before "Show more". */
 const PRODUCT_PAGE = 36;
@@ -46,7 +48,7 @@ const CHIP_HUES = ["var(--brand-primary)", "var(--brand-secondary)", "var(--stat
 export default function NewOrder() {
   const ui = useUi();
   const app = useApp();
-  const { products, categories, specials, customers, suburbs, trucks, paySettings, business } = app;
+  const { products, categories, specials, customers, suburbs, trucks, paySettings, business, orderItems } = app;
 
   const yard = ui.orderMode === "yardsale";
   const drafts = ui.drafts;
@@ -198,7 +200,36 @@ export default function NewOrder() {
     setContactAddOpen(false);
   };
 
-  const catNames = ["All", ...categories.map((c) => c.name)];
+  /* Categories ranked by how often the yard actually orders out of them, from
+     the line items already in the store. Two categories carry three quarters of
+     everything sold here, so an alphabetical list buries the ones in daily use
+     behind the ones nobody has touched in a year.
+
+     A fresh install has no order history to rank by, and during the first
+     seconds after sign-in only the recent window is loaded — which is the
+     better signal anyway. Either way it falls back to how many products a
+     category holds, so the row is never arbitrary. */
+  const categoryOptions = useMemo(() => {
+    const byCategory = new Map<string, { weight: number; products: number }>();
+    for (const c of categories) byCategory.set(c.id, { weight: 0, products: 0 });
+
+    const categoryOf = new Map(products.map((p) => [p.id, p.category_id]));
+    for (const p of products) {
+      const e = p.category_id ? byCategory.get(p.category_id) : undefined;
+      if (e) e.products += 1;
+    }
+    for (const lines of Object.values(orderItems) as OrderItem[][]) {
+      for (const i of lines) {
+        const cid = i.product_id ? categoryOf.get(i.product_id) : null;
+        const e = cid ? byCategory.get(cid) : undefined;
+        if (e) e.weight += 1;
+      }
+    }
+    return categories.map((c) => {
+      const e = byCategory.get(c.id)!;
+      return { name: c.name, weight: e.weight || e.products / 1000, products: e.products };
+    });
+  }, [categories, products, orderItems]);
   const pq = prodQuery.trim().toLowerCase();
   const visibleProducts = products.filter((p) => {
     if (catFilter !== "All" && catName(p.category_id) !== catFilter) return false;
@@ -703,28 +734,7 @@ export default function NewOrder() {
                   </div>
                 </div>
 
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {catNames.map((label) => {
-                    const on = catFilter === label;
-                    return (
-                      <div
-                        key={label}
-                        onClick={() => setCatFilter(label)}
-                        style={{
-                          cursor: "pointer",
-                          fontSize: 12,
-                          padding: "5px 11px",
-                          borderRadius: 9999,
-                          border: `1px solid ${on ? "var(--border-strong)" : "var(--border-subtle)"}`,
-                          background: on ? "var(--surface-active)" : "transparent",
-                          color: on ? "var(--text-primary)" : "var(--text-muted)",
-                        }}
-                      >
-                        {label}
-                      </div>
-                    );
-                  })}
-                </div>
+                <CategoryPicker options={categoryOptions} value={catFilter} onChange={setCatFilter} />
 
                 <div className="product-grid-wrap">
                   <div className="product-grid">
