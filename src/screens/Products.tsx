@@ -15,6 +15,114 @@ import type { Product, ProductUnit } from "../lib/types";
 import { addCategory, createSpecial, deleteProduct, removeCategory, removeSpecial, renameCategory, toggleSpecial, upsertProduct } from "../data/api";
 import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, Icon, Input, Select, Switch, Tabs, Textarea } from "../design-system/components.js";
 
+/* Cards drawn before "Show more". */
+const CARD_PAGE = 48;
+
+/* Not every product has a photograph, and a broken link is the same as no
+   photograph — the placeholder covers both, so the grid never shows a torn
+   image icon. */
+function ProductCard({
+  p,
+  effective,
+  category,
+  onOpen,
+}: {
+  p: Product;
+  effective: number;
+  category: string;
+  onOpen: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const [broken, setBroken] = useState(false);
+  React.useEffect(() => setBroken(false), [p.image_url]);
+
+  const onSpecial = effective < Number(p.price);
+  const stock = p.kind === "variable" ? (p.variants || []).reduce((t, v) => t + Number(v.stock || 0), 0) : Number(p.stock);
+  const showImage = !!p.image_url && !broken;
+
+  return (
+    <div
+      onClick={onOpen}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={`${p.name} — click to edit`}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        cursor: "pointer",
+        overflow: "hidden",
+        borderRadius: "var(--radius-lg)",
+        background: "var(--surface-card)",
+        border: `1px solid ${hover ? "var(--border-strong)" : "var(--border-subtle)"}`,
+        boxShadow: hover ? "var(--shadow-md)" : "var(--shadow-sm)",
+        transform: hover ? "translateY(-2px)" : "none",
+        transition: "var(--transition-surface)",
+        opacity: p.active ? 1 : 0.6,
+      }}
+    >
+      <div
+        style={{
+          position: "relative",
+          aspectRatio: "4 / 3",
+          background: "var(--surface-raised)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {showImage ? (
+          <img
+            src={p.image_url!}
+            alt=""
+            loading="lazy"
+            onError={() => setBroken(true)}
+            /* Positioned out of flow so the 4:3 well keeps its shape: an in-flow
+               img with height:100% resolves against its own intrinsic ratio and
+               stretches the box, which left photographed products taller than
+               unphotographed ones and the grid ragged. */
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <Icon name="package" size={26} color="var(--text-faint)" />
+            <span style={{ fontSize: 10, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-faint)" }}>
+              No photo
+            </span>
+          </div>
+        )}
+
+        <div style={{ position: "absolute", top: 8, left: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {onSpecial && <Badge tone="success">Special</Badge>}
+          {!p.active && <Badge tone="neutral">Inactive</Badge>}
+          {p.kind === "variable" && <Badge tone="info">{(p.variants || []).length} variants</Badge>}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 12, flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3, color: "var(--text-primary)" }}>{p.name}</div>
+        <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
+          <span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{p.sku}</span> · {category}
+        </div>
+        <span style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+          <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: onSpecial ? "var(--feedback-success)" : "var(--text-primary)" }}>
+            {AUD(effective)}
+          </span>
+          {onSpecial && (
+            <span className="tabular" style={{ fontSize: 11, color: "var(--text-faint)", textDecoration: "line-through" }}>
+              {AUD(Number(p.price))}
+            </span>
+          )}
+          <span style={{ fontSize: 11, color: "var(--text-faint)" }}>/ {p.unit}</span>
+        </div>
+        <div className="tabular" style={{ fontSize: 11, color: stock > 0 ? "var(--text-muted)" : "var(--attention)" }}>
+          {stock > 0 ? `${qtyText(stock, p.unit)} on hand` : "None on hand"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const BLANK_FORM = {
   open: false,
   mode: "add" as "add" | "edit",
@@ -27,6 +135,7 @@ const BLANK_FORM = {
   stock: "",
   fractional: true,
   kind: "single" as "single" | "variable",
+  imageUrl: "",
   variants: [] as { name: string; sku: string; price: string; stock: string }[],
 };
 
@@ -34,8 +143,12 @@ export default function Products() {
   const app = useApp();
   const { products, categories, specials } = app;
   const [tab, setTab] = useState<"catalogue" | "categories" | "specials">("catalogue");
+  const [view, setView] = useState<"cards" | "table">("cards");
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("All categories");
+  /* Nine hundred cards, each with a photograph, is not something to mount at
+     once. A screenful at a time, same as the other long lists in here. */
+  const [shownCards, setShownCards] = useState(CARD_PAGE);
   const [csvNote, setCsvNote] = useState<{ title: string; body: string } | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [importPlan, setImportPlan] = useState<{ plan: ProductImportPlan; file: string } | null>(null);
@@ -57,6 +170,27 @@ export default function Products() {
     if (catFilter !== "All categories" && catName(p.category_id) !== catFilter) return false;
     return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
   });
+
+  React.useEffect(() => setShownCards(CARD_PAGE), [query, catFilter, view]);
+
+  /* Opening a product for editing — shared by a card and a table row, so they
+     cannot drift apart. */
+  const edit = (p: Product) =>
+    setForm({
+      open: true,
+      mode: "edit",
+      id: p.id,
+      name: p.name,
+      sku: p.sku,
+      categoryId: p.category_id || "",
+      unit: p.unit,
+      price: String(p.price),
+      stock: String(p.stock),
+      fractional: unitFor(p).divisible,
+      kind: p.kind,
+      imageUrl: p.image_url || "",
+      variants: (p.variants || []).map((v) => ({ name: v.name, sku: v.sku, price: String(v.price), stock: String(v.stock) })),
+    });
 
   const setPf = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
   const pfUnitRes = unitFor({ unit: form.unit, fractional: form.fractional });
@@ -199,6 +333,16 @@ export default function Products() {
               <Input size="sm" icon="search" value={query} onChange={(e: any) => setQuery(e.target.value)} placeholder="Product name or SKU" />
             </div>
             <Select size="sm" options={["All categories", ...categories.map((c) => c.name)]} value={catFilter} onChange={(e: any) => setCatFilter(e.target.value)} style={{ width: 180, flexShrink: 0 }} />
+            {/* The table is still the better tool for a stocktake, so it stays
+                one click away rather than being replaced outright. */}
+            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <Button variant={view === "cards" ? "outline" : "ghost"} size="sm" iconLeft="grid-2x2" onClick={() => setView("cards")}>
+                Cards
+              </Button>
+              <Button variant={view === "table" ? "outline" : "ghost"} size="sm" iconLeft="list" onClick={() => setView("table")}>
+                Table
+              </Button>
+            </div>
             <Button variant="primary" size="sm" iconLeft="plus" onClick={() => setForm({ ...BLANK_FORM, open: true, categoryId: categories[0]?.id || "", fractional: unitOf("m³").divisible })}>
               Add product
             </Button>
@@ -208,6 +352,35 @@ export default function Products() {
               ? `${products.length} products${activeSpecials.length ? ` · ${discounted} on special` : ""}`
               : `${matches.length} of ${products.length} products`}
           </div>
+          {view === "cards" ? (
+            <>
+              <div className="product-grid">
+                {matches.slice(0, shownCards).map((p) => (
+                  <ProductCard
+                    key={p.id}
+                    p={p}
+                    effective={priceOf(p)}
+                    category={catName(p.category_id)}
+                    onOpen={() => edit(p)}
+                  />
+                ))}
+              </div>
+              {matches.length === 0 && (
+                <Card padding="default">
+                  <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
+                    No products match these filters.
+                  </div>
+                </Card>
+              )}
+              {matches.length > shownCards && (
+                <div style={{ display: "flex", justifyContent: "center", paddingTop: 4 }}>
+                  <Button variant="outline" size="sm" iconLeft="chevron-down" onClick={() => setShownCards((n) => n + CARD_PAGE)}>
+                    Show {Math.min(CARD_PAGE, matches.length - shownCards)} more of {matches.length}
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
           <Card padding="none">
             <div style={{ overflowX: "auto" }}>
               <DataTable
@@ -234,26 +407,11 @@ export default function Products() {
                   };
                 })}
                 dense
-                onRowClick={(row: any) => {
-                  const p: Product = row._p;
-                  setForm({
-                    open: true,
-                    mode: "edit",
-                    id: p.id,
-                    name: p.name,
-                    sku: p.sku,
-                    categoryId: p.category_id || "",
-                    unit: p.unit,
-                    price: String(p.price),
-                    stock: String(p.stock),
-                    fractional: unitFor(p).divisible,
-                    kind: p.kind,
-                    variants: (p.variants || []).map((v) => ({ name: v.name, sku: v.sku, price: String(v.price), stock: String(v.stock) })),
-                  });
-                }}
+                onRowClick={(row: any) => edit(row._p)}
               />
             </div>
           </Card>
+          )}
         </div>
       )}
 
@@ -508,6 +666,45 @@ export default function Products() {
                 <Input size="sm" label="Product name" value={form.name} onChange={(e: any) => setPf({ name: e.target.value })} placeholder="e.g. Screened topsoil" />
                 <Input size="sm" label="SKU" value={form.sku} onChange={(e: any) => setPf({ sku: e.target.value })} placeholder={form.mode === "edit" ? "SKU" : "Left blank, one is generated"} />
               </div>
+              {/* The catalogue photographs came over from the old app; this is
+                  how a new one gets set, and how a wrong one gets cleared. */}
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Input
+                    size="sm"
+                    label="Photo URL"
+                    value={form.imageUrl}
+                    onChange={(e: any) => setPf({ imageUrl: e.target.value })}
+                    placeholder="Leave blank to show the placeholder"
+                  />
+                </div>
+                <div
+                  style={{
+                    width: 56,
+                    height: 42,
+                    flexShrink: 0,
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    background: "var(--surface-raised)",
+                    border: "1px solid var(--border-subtle)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {form.imageUrl.trim() ? (
+                    <img
+                      src={form.imageUrl.trim()}
+                      alt=""
+                      onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+                      onLoad={(e) => ((e.target as HTMLImageElement).style.display = "block")}
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <Icon name="package" size={16} color="var(--text-faint)" />
+                  )}
+                </div>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
                 <Select size="sm" label="Category" options={categories.map((c) => ({ value: c.id, label: c.name }))} value={form.categoryId} onChange={(e: any) => setPf({ categoryId: e.target.value })} />
                 <Select
@@ -600,6 +797,7 @@ export default function Products() {
                       stock: form.kind === "variable" ? variants.reduce((t, v) => t + v.stock, 0) : parseFloat(form.stock) || 0,
                       fractional: form.fractional,
                       kind: form.kind,
+                      image_url: form.imageUrl.trim() || null,
                     },
                     variants
                   );

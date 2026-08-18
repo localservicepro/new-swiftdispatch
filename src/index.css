@@ -16,3 +16,21 @@
   height: 100vh;
   min-height: 600px;
 }
+
+/* Product catalogue grid — four across on a desk, fewer as the window narrows.
+   Inline styles cannot carry media queries, and every other layout in this app
+   is inline, so this is the one rule that has to live in a stylesheet. */
+.product-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 1400px) {
+  .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1000px) {
+  .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .product-grid { grid-template-columns: minmax(0, 1fr); }
+}
