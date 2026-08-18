@@ -17,20 +17,34 @@
   min-height: 600px;
 }
 
-/* Product catalogue grid — four across on a desk, fewer as the window narrows.
-   Inline styles cannot carry media queries, and every other layout in this app
-   is inline, so this is the one rule that has to live in a stylesheet. */
+/* Product grid — four across when there is room, fewer as the space narrows.
+
+   Sized against its container rather than the window, because it appears in two
+   very different places: the full-width Products tab, and the New order screen
+   where it sits beside the cart in maybe half the width. A viewport media query
+   would give the order screen four cards squeezed into a column meant for two.
+   The breakpoints are set so both places get four: roughly 200px a card is the
+   narrowest that still reads, and the order panel is comfortably above it. */
+.product-grid-wrap {
+  container-type: inline-size;
+}
 .product-grid {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
-@media (max-width: 1400px) {
+@container (max-width: 860px) {
   .product-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (max-width: 1000px) {
+@container (max-width: 620px) {
   .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 640px) {
+@container (max-width: 420px) {
   .product-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Containment is widely supported now, but if it is not, fall back to columns
+   that size themselves so nothing collapses to a single stretched card. */
+@supports not (container-type: inline-size) {
+  .product-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 }

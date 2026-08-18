@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { applyProductImport, exportProductsCsv, planProductImport, type ProductImportPlan } from "../data/productIo";
 import ImportPreview, { type PreviewRow } from "./ImportPreview";
+import ProductCard, { CatalogueBadges, StockLine } from "./ProductCard";
+import { ACCEPT, deleteProductImage, rejectReason, uploadProductImage } from "../data/productImages";
 
 const PRODUCT_ACTION: Record<string, string> = {
   create: "New",
@@ -18,111 +20,6 @@ import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, Icon, Inpu
 /* Cards drawn before "Show more". */
 const CARD_PAGE = 48;
 
-/* Not every product has a photograph, and a broken link is the same as no
-   photograph — the placeholder covers both, so the grid never shows a torn
-   image icon. */
-function ProductCard({
-  p,
-  effective,
-  category,
-  onOpen,
-}: {
-  p: Product;
-  effective: number;
-  category: string;
-  onOpen: () => void;
-}) {
-  const [hover, setHover] = useState(false);
-  const [broken, setBroken] = useState(false);
-  React.useEffect(() => setBroken(false), [p.image_url]);
-
-  const onSpecial = effective < Number(p.price);
-  const stock = p.kind === "variable" ? (p.variants || []).reduce((t, v) => t + Number(v.stock || 0), 0) : Number(p.stock);
-  const showImage = !!p.image_url && !broken;
-
-  return (
-    <div
-      onClick={onOpen}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title={`${p.name} — click to edit`}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        cursor: "pointer",
-        overflow: "hidden",
-        borderRadius: "var(--radius-lg)",
-        background: "var(--surface-card)",
-        border: `1px solid ${hover ? "var(--border-strong)" : "var(--border-subtle)"}`,
-        boxShadow: hover ? "var(--shadow-md)" : "var(--shadow-sm)",
-        transform: hover ? "translateY(-2px)" : "none",
-        transition: "var(--transition-surface)",
-        opacity: p.active ? 1 : 0.6,
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          aspectRatio: "4 / 3",
-          background: "var(--surface-raised)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {showImage ? (
-          <img
-            src={p.image_url!}
-            alt=""
-            loading="lazy"
-            onError={() => setBroken(true)}
-            /* Positioned out of flow so the 4:3 well keeps its shape: an in-flow
-               img with height:100% resolves against its own intrinsic ratio and
-               stretches the box, which left photographed products taller than
-               unphotographed ones and the grid ragged. */
-            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
-          />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-            <Icon name="package" size={26} color="var(--text-faint)" />
-            <span style={{ fontSize: 10, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-faint)" }}>
-              No photo
-            </span>
-          </div>
-        )}
-
-        <div style={{ position: "absolute", top: 8, left: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {onSpecial && <Badge tone="success">Special</Badge>}
-          {!p.active && <Badge tone="neutral">Inactive</Badge>}
-          {p.kind === "variable" && <Badge tone="info">{(p.variants || []).length} variants</Badge>}
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: 12, flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3, color: "var(--text-primary)" }}>{p.name}</div>
-        <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
-          <span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{p.sku}</span> · {category}
-        </div>
-        <span style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-          <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: onSpecial ? "var(--feedback-success)" : "var(--text-primary)" }}>
-            {AUD(effective)}
-          </span>
-          {onSpecial && (
-            <span className="tabular" style={{ fontSize: 11, color: "var(--text-faint)", textDecoration: "line-through" }}>
-              {AUD(Number(p.price))}
-            </span>
-          )}
-          <span style={{ fontSize: 11, color: "var(--text-faint)" }}>/ {p.unit}</span>
-        </div>
-        <div className="tabular" style={{ fontSize: 11, color: stock > 0 ? "var(--text-muted)" : "var(--attention)" }}>
-          {stock > 0 ? `${qtyText(stock, p.unit)} on hand` : "None on hand"}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const BLANK_FORM = {
   open: false,
   mode: "add" as "add" | "edit",
@@ -136,6 +33,12 @@ const BLANK_FORM = {
   fractional: true,
   kind: "single" as "single" | "variable",
   imageUrl: "",
+  /* What the form has done to the photograph, settled only on Save or Cancel:
+     the picture this edit displaced, and the one it uploaded. Whichever the
+     product does not end up wearing gets deleted, so an abandoned edit leaves
+     no orphan in the bucket and no missing file on a product. */
+  imageRemoved: "",
+  imageAdded: "",
   variants: [] as { name: string; sku: string; price: string; stock: string }[],
 };
 
@@ -149,6 +52,8 @@ export default function Products() {
   /* Nine hundred cards, each with a photograph, is not something to mount at
      once. A screenful at a time, same as the other long lists in here. */
   const [shownCards, setShownCards] = useState(CARD_PAGE);
+  const [uploading, setUploading] = useState(false);
+  const imgRef = React.useRef<HTMLInputElement>(null);
   const [csvNote, setCsvNote] = useState<{ title: string; body: string } | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
   const [importPlan, setImportPlan] = useState<{ plan: ProductImportPlan; file: string } | null>(null);
@@ -189,10 +94,22 @@ export default function Products() {
       fractional: unitFor(p).divisible,
       kind: p.kind,
       imageUrl: p.image_url || "",
+      imageRemoved: "",
+      imageAdded: "",
       variants: (p.variants || []).map((v) => ({ name: v.name, sku: v.sku, price: String(v.price), stock: String(v.stock) })),
     });
 
   const setPf = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
+
+  /* Closing the form settles what happened to the photograph. Saving keeps what
+     is on screen and drops what it displaced; cancelling does the reverse and
+     drops whatever this edit uploaded. Either way the bucket ends up holding
+     exactly the files the catalogue points at. */
+  const closeForm = (saved: boolean) => {
+    const drop = saved ? form.imageRemoved : form.imageAdded;
+    if (drop && drop !== (saved ? form.imageUrl : form.imageRemoved)) void deleteProductImage(drop);
+    setForm({ ...BLANK_FORM });
+  };
   const pfUnitRes = unitFor({ unit: form.unit, fractional: form.fractional });
 
   const productsIn = (s: (typeof specials)[number]) =>
@@ -354,16 +271,23 @@ export default function Products() {
           </div>
           {view === "cards" ? (
             <>
-              <div className="product-grid">
-                {matches.slice(0, shownCards).map((p) => (
-                  <ProductCard
-                    key={p.id}
-                    p={p}
-                    effective={priceOf(p)}
-                    category={catName(p.category_id)}
-                    onOpen={() => edit(p)}
-                  />
-                ))}
+              <div className="product-grid-wrap">
+                <div className="product-grid">
+                  {matches.slice(0, shownCards).map((p) => {
+                    const eff = priceOf(p);
+                    return (
+                      <ProductCard
+                        key={p.id}
+                        p={p}
+                        effective={eff}
+                        subtitle={catName(p.category_id)}
+                        onClick={() => edit(p)}
+                        badges={<CatalogueBadges p={p} onSpecial={eff < Number(p.price)} />}
+                        footer={<StockLine p={p} />}
+                      />
+                    );
+                  })}
+                </div>
               </div>
               {matches.length === 0 && (
                 <Card padding="default">
@@ -634,7 +558,7 @@ export default function Products() {
 
       {/* Product add/edit modal */}
       {form.open && (
-        <div onClick={() => setForm({ ...BLANK_FORM })} style={{ position: "fixed", inset: 0, zIndex: 24, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--om-scrim)" }}>
+        <div onClick={() => closeForm(false)} style={{ position: "fixed", inset: 0, zIndex: 24, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--om-scrim)" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "min(640px,100%)", maxHeight: "calc(100% - 48px)", display: "flex", flexDirection: "column", borderRadius: 16, background: "var(--surface-card)", border: "1px solid var(--border-default)", boxShadow: "var(--om-overlay-shadow)", overflow: "hidden" }}>
             <div style={{ flexShrink: 0, padding: 16, borderBottom: "1px solid var(--border-subtle)" }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>{form.mode === "edit" ? form.name || "Edit product" : "Add a product"}</div>
@@ -666,22 +590,14 @@ export default function Products() {
                 <Input size="sm" label="Product name" value={form.name} onChange={(e: any) => setPf({ name: e.target.value })} placeholder="e.g. Screened topsoil" />
                 <Input size="sm" label="SKU" value={form.sku} onChange={(e: any) => setPf({ sku: e.target.value })} placeholder={form.mode === "edit" ? "SKU" : "Left blank, one is generated"} />
               </div>
-              {/* The catalogue photographs came over from the old app; this is
-                  how a new one gets set, and how a wrong one gets cleared. */}
-              <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <Input
-                    size="sm"
-                    label="Photo URL"
-                    value={form.imageUrl}
-                    onChange={(e: any) => setPf({ imageUrl: e.target.value })}
-                    placeholder="Leave blank to show the placeholder"
-                  />
-                </div>
+              {/* Pick a file, not a URL. Nobody at a garden supplies yard should
+                  have to host an image somewhere else first. */}
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                 <div
                   style={{
-                    width: 56,
-                    height: 42,
+                    position: "relative",
+                    width: 108,
+                    height: 81,
                     flexShrink: 0,
                     borderRadius: 8,
                     overflow: "hidden",
@@ -692,17 +608,81 @@ export default function Products() {
                     justifyContent: "center",
                   }}
                 >
-                  {form.imageUrl.trim() ? (
+                  {form.imageUrl ? (
                     <img
-                      src={form.imageUrl.trim()}
+                      src={form.imageUrl}
                       alt=""
-                      onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-                      onLoad={(e) => ((e.target as HTMLImageElement).style.display = "block")}
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
                     />
                   ) : (
-                    <Icon name="package" size={16} color="var(--text-faint)" />
+                    <Icon name="package" size={20} color="var(--text-faint)" />
                   )}
+                  {uploading && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: "rgba(6,7,15,.7)",
+                        fontSize: 11,
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      Uploading…
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Photo</span>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <Button variant="outline" size="sm" iconLeft="upload" disabled={uploading} onClick={() => imgRef.current?.click()}>
+                      {form.imageUrl ? "Replace photo" : "Upload photo"}
+                    </Button>
+                    {form.imageUrl && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconLeft="trash-2"
+                        disabled={uploading}
+                        onClick={() => {
+                          /* Only drops the file once the product is saved
+                             without it — clearing the field is not a decision
+                             until Save says so. */
+                          setPf({ imageUrl: "", imageRemoved: form.imageUrl });
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                    PNG, JPG, WEBP, GIF or AVIF up to 10MB. Without one the catalogue shows a placeholder.
+                  </span>
+                  <input
+                    ref={imgRef}
+                    type="file"
+                    accept={ACCEPT}
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      const bad = rejectReason(file);
+                      if (bad) return app.toast({ tone: "danger", title: "That file cannot be used", description: bad });
+                      setUploading(true);
+                      const { url, error } = await uploadProductImage(file);
+                      setUploading(false);
+                      if (error || !url) {
+                        return app.toast({ tone: "danger", title: "The photo did not upload", description: error || "No URL came back." });
+                      }
+                      /* The photograph being replaced is remembered, not deleted
+                         — cancelling the form must leave the product as it was. */
+                      setPf({ imageUrl: url, imageRemoved: form.imageRemoved || form.imageUrl, imageAdded: url });
+                    }}
+                  />
                 </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
@@ -764,6 +744,10 @@ export default function Products() {
                   size="md"
                   iconLeft="trash-2"
                   onClick={() => {
+                    /* The product goes, so its photograph goes with it —
+                       including one uploaded during this edit and never saved. */
+                    void deleteProductImage(form.imageUrl || form.imageRemoved);
+                    if (form.imageAdded && form.imageAdded !== form.imageUrl) void deleteProductImage(form.imageAdded);
                     deleteProduct(form.id);
                     setForm({ ...BLANK_FORM });
                   }}
@@ -772,14 +756,14 @@ export default function Products() {
                 </Button>
               )}
               <div style={{ flex: 1 }} />
-              <Button variant="ghost" size="md" onClick={() => setForm({ ...BLANK_FORM })}>
+              <Button variant="ghost" size="md" disabled={uploading} onClick={() => closeForm(false)}>
                 Cancel
               </Button>
               <Button
                 variant="primary"
                 size="md"
                 iconLeft="check"
-                disabled={!(form.name.trim() && (form.kind === "variable" ? form.variants.some((v) => v.name.trim() && parseFloat(v.price) > 0) : parseFloat(form.price) > 0))}
+                disabled={uploading || !(form.name.trim() && (form.kind === "variable" ? form.variants.some((v) => v.name.trim() && parseFloat(v.price) > 0) : parseFloat(form.price) > 0))}
                 onClick={() => {
                   const variants = form.variants
                     .filter((v) => v.name.trim() && parseFloat(v.price) > 0)
@@ -801,7 +785,7 @@ export default function Products() {
                     },
                     variants
                   );
-                  setForm({ ...BLANK_FORM });
+                  closeForm(true);
                 }}
               >
                 {form.mode === "edit" ? "Save changes" : "Add product"}

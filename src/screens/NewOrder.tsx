@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { blankDraft, useApp, type CartLine, type DeliveryDraft } from "../store/store";
 import { useUi } from "../store/ui";
 import {
@@ -23,12 +23,12 @@ import { PAYMENT_METHODS } from "../lib/types";
 import { addContact, createOrder } from "../data/api";
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Icon,
   Input,
   PaymentSummary,
-  ProductTile,
   Select,
   StatusBadge,
   StepProgress,
@@ -36,6 +36,10 @@ import {
   Textarea,
 } from "../design-system/components.js";
 import AddressSearch from "./AddressSearch";
+import ProductCard from "./ProductCard";
+
+/* Product cards drawn before "Show more". */
+const PRODUCT_PAGE = 36;
 
 const CHIP_HUES = ["var(--brand-primary)", "var(--brand-secondary)", "var(--status-loading)", "var(--status-enroute)"];
 
@@ -52,6 +56,9 @@ export default function NewOrder() {
 
   const [catFilter, setCatFilter] = useState("All");
   const [prodQuery, setProdQuery] = useState("");
+  /* Nine hundred cards with photographs is not something to mount while someone
+     is trying to take an order. */
+  const [shownProducts, setShownProducts] = useState(PRODUCT_PAGE);
   const [custQuery, setCustQuery] = useState("");
   const [contactAddOpen, setContactAddOpen] = useState(false);
   const [newContact, setNewContact] = useState({ name: "", phone: "" });
@@ -197,6 +204,8 @@ export default function NewOrder() {
     if (catFilter !== "All" && catName(p.category_id) !== catFilter) return false;
     return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
   });
+
+  useEffect(() => setShownProducts(PRODUCT_PAGE), [prodQuery, catFilter]);
 
   const perDraft = drafts.map((d) => ({
     letter: d.letter,
@@ -717,23 +726,69 @@ export default function NewOrder() {
                   })}
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 10 }}>
-                  {visibleProducts.map((p) => (
-                    <ProductTile
-                      key={p.id}
-                      name={p.name}
-                      sku={p.sku}
-                      price={AUD0(priceOf(p.id))}
-                      unit={p.unit}
-                      quantity={cart.find((l) => l.productId === p.id && l.to === activeDraft)?.qty || 0}
-                      onAdd={() => addProduct(p.id)}
-                      onRemove={() => {
-                        const idx = cart.findIndex((l) => l.productId === p.id && l.to === activeDraft);
-                        if (idx >= 0) bumpLine(idx, -1);
-                      }}
-                    />
-                  ))}
+                <div className="product-grid-wrap">
+                  <div className="product-grid">
+                    {visibleProducts.slice(0, shownProducts).map((p) => {
+                      const inCart = cart.find((l) => l.productId === p.id && l.to === activeDraft)?.qty || 0;
+                      const eff = priceOf(p.id);
+                      const out = p.kind === "variable" ? false : Number(p.stock) <= 0;
+                      return (
+                        <ProductCard
+                          key={p.id}
+                          p={p}
+                          effective={eff}
+                          compact
+                          selected={inCart > 0}
+                          onClick={() => addProduct(p.id)}
+                          badges={
+                            <>
+                              {eff < Number(p.price) && <Badge tone="success">Special</Badge>}
+                              {out && <Badge tone="warning">None on hand</Badge>}
+                            </>
+                          }
+                          footer={
+                            inCart > 0 ? (
+                              /* The stepper is the one place a tap must not add
+                                 another unit, so it swallows the card's click. */
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, paddingTop: 2 }}
+                              >
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  iconLeft="minus"
+                                  onClick={() => {
+                                    const idx = cart.findIndex((l) => l.productId === p.id && l.to === activeDraft);
+                                    if (idx >= 0) bumpLine(idx, -1);
+                                  }}
+                                />
+                                <span className="tabular" style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-secondary)" }}>
+                                  {qtyText(inCart, p.unit)}
+                                </span>
+                                <Button variant="outline" size="sm" iconLeft="plus" onClick={() => addProduct(p.id)} />
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: 11, color: "var(--text-faint)", paddingTop: 2 }}>Tap to add</div>
+                            )
+                          }
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
+                {visibleProducts.length === 0 && (
+                  <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
+                    No products match that search.
+                  </div>
+                )}
+                {visibleProducts.length > shownProducts && (
+                  <div style={{ display: "flex", justifyContent: "center" }}>
+                    <Button variant="outline" size="sm" iconLeft="chevron-down" onClick={() => setShownProducts((n) => n + PRODUCT_PAGE)}>
+                      Show {Math.min(PRODUCT_PAGE, visibleProducts.length - shownProducts)} more of {visibleProducts.length}
+                    </Button>
+                  </div>
+                )}
               </div>
             </Card>
           </div>
