@@ -1,17 +1,17 @@
 /* Putting a photograph on a product.
 
-   The catalogue's pictures came over from the old app, but there was no way to
-   add one from in here — a URL field would have meant hosting the file
-   somewhere else first, which is not a thing anyone at a garden supplies yard
-   should have to do. This uploads the file into the project's own bucket and
-   hands back the URL to store on the product. */
+   The file goes to the `product-image` edge function, not to storage. The app
+   talks to Postgres as anon and that key ships in the JavaScript bundle, so a
+   bucket the app could write to directly was a bucket anyone could write to,
+   under any name they liked. The function takes a file and hands back a URL:
+   the caller does not choose the bucket, the path or the name, and the key that
+   could reach anything else never leaves the edge runtime. */
 
 import { supabase } from "../lib/supabase";
 
-export const BUCKET = "product-images";
-
-/* Matches the bucket's own limits, so a file that would be refused server-side
-   is refused here instead — with a sentence rather than a 400. */
+/* Checked here as well as in the function, so an obviously wrong file is
+   refused before it is uploaded rather than after. The function is the one that
+   actually enforces it — this is only to save the round trip. */
 export const MAX_BYTES = 10 * 1024 * 1024;
 const TYPES: Record<string, string> = {
   "image/png": "png",
@@ -35,38 +35,38 @@ export interface UploadResult {
   error?: string;
 }
 
-/* Uploads under a fresh random name rather than the product's id: a product
-   being created has no id yet, and a new name means a replaced photograph
-   cannot be served stale from a cache that still holds the old one. */
 export async function uploadProductImage(file: File): Promise<UploadResult> {
   const reason = rejectReason(file);
   if (reason) return { error: reason };
 
-  const ext = TYPES[file.type];
-  const name = `${crypto.randomUUID()}.${ext}`;
+  const form = new FormData();
+  form.append("file", file);
 
-  const { error } = await supabase.storage.from(BUCKET).upload(name, file, {
-    contentType: file.type,
-    cacheControl: "31536000",
-    upsert: false,
-  });
-  if (error) return { error: error.message };
-
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(name);
-  return { url: data.publicUrl };
+  const { data, error } = await supabase.functions.invoke("product-image", { body: form });
+  if (error) return { error: await readError(error) };
+  if (data?.error) return { error: String(data.error) };
+  if (!data?.url) return { error: "The upload finished but no address came back for the file." };
+  return { url: String(data.url) };
 }
 
 /* Clearing or replacing a photograph takes the old file with it, so the bucket
-   does not fill up with pictures nothing points at. Only ever deletes from this
-   project's own bucket — a URL pointing anywhere else is left alone, and a
-   failure here is not worth interrupting anyone over: a stray file costs
-   storage, not correctness. */
+   does not fill up with pictures nothing points at. A failure is not worth
+   interrupting anyone over — a stray file costs storage, not correctness. */
 export async function deleteProductImage(url: string | null | undefined) {
   if (!url) return;
-  const marker = `/storage/v1/object/public/${BUCKET}/`;
-  const at = url.indexOf(marker);
-  if (at === -1) return;
-  const path = url.slice(at + marker.length).split("?")[0];
-  if (!path) return;
-  await supabase.storage.from(BUCKET).remove([decodeURIComponent(path)]);
+  await supabase.functions.invoke("product-image", { body: { action: "delete", url } });
+}
+
+/* An edge function that answers with a non-2xx status gives supabase-js a
+   FunctionsHttpError whose message is just "Edge Function returned a non-2xx
+   status code" — the sentence explaining what was actually wrong is in the
+   response body, so it is worth digging out. */
+async function readError(error: any): Promise<string> {
+  try {
+    const body = await error?.context?.json?.();
+    if (body?.error) return String(body.error);
+  } catch {
+    /* Not JSON, or no body — fall through to whatever the client said. */
+  }
+  return String(error?.message || error);
 }
