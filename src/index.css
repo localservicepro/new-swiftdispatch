@@ -48,3 +48,36 @@
 @supports not (container-type: inline-size) {
   .product-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
 }
+
+/* The cart on the New order screen.
+
+   Finding the next product means scrolling, and scrolling used to carry the
+   cart off the top of the screen — so by the time you were looking at products
+   you could no longer see what you had already put in the order. It stays put
+   now.
+
+   --page-chrome is what sits above the scrolling page: the top bar (63px) plus
+   the page's own padding (16px top and bottom). If either changes this is the
+   one place to follow. */
+:root {
+  --page-chrome: 95px;
+}
+.order-cart {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  /* A long cart gets its own scrollbar rather than growing past the window and
+     taking the checkout button out of reach. */
+  max-height: calc(100vh - var(--page-chrome));
+  overflow-y: auto;
+  /* Room for the scrollbar so it does not sit on top of the totals. */
+  scrollbar-gutter: stable;
+}
+
+/* Without this the cards inside simply shrink to fit the capped height rather
+   than overflowing it — so the column never scrolls, and the Card's own
+   overflow:hidden silently clips the bottom of a long cart, checkout button and
+   all. They must keep their natural height for there to be anything to scroll. */
+.order-cart > * {
+  flex-shrink: 0;
+}

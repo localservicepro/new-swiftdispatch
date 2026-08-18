@@ -756,6 +756,25 @@ export default function NewOrder() {
                               {out && <Badge tone="warning">None on hand</Badge>}
                             </>
                           }
+                          corner={
+                            inCart > 0 ? (
+                              <span
+                                className="tabular"
+                                style={{
+                                  display: "inline-block",
+                                  padding: "3px 9px",
+                                  borderRadius: 9999,
+                                  background: "var(--brand-primary)",
+                                  color: "#fff",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  boxShadow: "0 2px 8px rgba(0,0,0,.45)",
+                                }}
+                              >
+                                {qtyText(inCart, p.unit)} in order
+                              </span>
+                            ) : null
+                          }
                           footer={
                             inCart > 0 ? (
                               /* The stepper is the one place a tap must not add
@@ -803,7 +822,7 @@ export default function NewOrder() {
             </Card>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: "1 1 320px", minWidth: 290, maxWidth: 400 }}>
+          <div className="order-cart" style={{ display: "flex", flexDirection: "column", gap: 12, flex: "1 1 320px", minWidth: 290, maxWidth: 400 }}>
             {customerPickerCard}
 
             <Card title={yard ? "Counter sale" : "Cart"} subtitle={isSplitDraft ? "Tap a letter to move that line to the next delivery" : undefined} padding="default">

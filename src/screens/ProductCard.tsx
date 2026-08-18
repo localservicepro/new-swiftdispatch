@@ -27,6 +27,15 @@ export interface ProductCardProps {
   selected?: boolean;
   /* Top-left, over the photograph. */
   badges?: React.ReactNode;
+  /* Bottom-right, over the photograph — how much of this is already in the
+     order. The ring around a selected card is easy to miss when you are
+     scanning four columns of photographs, and the whole question while
+     scrolling is "have I added this one yet".
+
+     Bottom rather than top so it never collides with the badges on the left:
+     a product that is both out of stock and already in the order had the two
+     sitting on top of each other. */
+  corner?: React.ReactNode;
   compact?: boolean;
 }
 
@@ -38,6 +47,7 @@ export default function ProductCard({
   footer,
   selected = false,
   badges,
+  corner,
   compact = false,
 }: ProductCardProps) {
   const [hover, setHover] = useState(false);
@@ -104,6 +114,7 @@ export default function ProductCard({
         {badges && (
           <div style={{ position: "absolute", top: 8, left: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>{badges}</div>
         )}
+        {corner && <div style={{ position: "absolute", bottom: 8, right: 8 }}>{corner}</div>}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 5, padding: compact ? 10 : 12, flex: 1 }}>
