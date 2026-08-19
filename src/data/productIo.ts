@@ -48,7 +48,10 @@ export function exportProductsCsv(): number {
         p.unit,
         p.fractional === null || p.fractional === undefined ? "" : p.fractional ? "Yes" : "No",
         p.price,
-        p.stock,
+        /* Blank when nobody counts this one, so the file does not hand back a
+           number the app has just finished refusing to show. Typing one in and
+           importing is how counting starts. */
+        p.track_stock ? p.stock : "",
         p.active ? "Yes" : "No",
         "",
         p.image_url || "",
@@ -226,8 +229,17 @@ export function planProductImport(text: string): ProductImportPlan {
     if (price !== null) values.price = price;
     else if (!existing) return reject("A new product needs a price.");
 
-    if (stock !== null) values.stock = stock;
-    else if (!existing) values.stock = 0;
+    /* Putting a number in the Stock column is the act of counting: it sets the
+       figure and turns tracking on. Leaving it blank on an existing product
+       leaves both alone, so a round-trip through the spreadsheet does not
+       quietly start tracking everything at zero. */
+    if (stock !== null) {
+      values.stock = stock;
+      values.track_stock = true;
+    } else if (!existing) {
+      values.stock = 0;
+      values.track_stock = false;
+    }
 
     const activeRaw = pick(row, "active", "enabled", "isactive");
     if (activeRaw) values.active = yes(activeRaw);

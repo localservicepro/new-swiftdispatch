@@ -741,7 +741,8 @@ export default function NewOrder() {
                     {visibleProducts.slice(0, shownProducts).map((p) => {
                       const inCart = cart.find((l) => l.productId === p.id && l.to === activeDraft)?.qty || 0;
                       const eff = priceOf(p.id);
-                      const out = p.kind === "variable" ? false : Number(p.stock) <= 0;
+                      /* Only a counted product can be out of one. */
+                      const out = p.track_stock && p.kind !== "variable" && Number(p.stock) <= 0;
                       return (
                         <ProductCard
                           key={p.id}

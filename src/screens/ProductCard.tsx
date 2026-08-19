@@ -146,8 +146,14 @@ export default function ProductCard({
   );
 }
 
-/* The catalogue's bottom line: what is on the shelf. */
+/* The catalogue's bottom line: what is on the shelf, or an admission that
+   nobody knows. Most of the catalogue came from an app that seeded a number
+   per product rather than counting, so saying "8,999,998 on hand" would be
+   inventing a fact. */
 export function StockLine({ p }: { p: Product }) {
+  if (!p.track_stock) {
+    return <div style={{ fontSize: 11, color: "var(--text-faint)" }}>Stock not tracked</div>;
+  }
   const stock =
     p.kind === "variable" ? (p.variants || []).reduce((t, v) => t + Number(v.stock || 0), 0) : Number(p.stock);
   return (

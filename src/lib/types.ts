@@ -86,6 +86,10 @@ export interface Product {
   kind: "single" | "variable";
   price: number;
   stock: number;
+  /* Whether `stock` is a real count. False for everything carried over from the
+     old app, which seeded a round number per product and decremented it as
+     things sold — so the figure is a leftover, not something to show anyone. */
+  track_stock: boolean;
   image_url: string | null;
   active: boolean;
   variants?: ProductVariant[];

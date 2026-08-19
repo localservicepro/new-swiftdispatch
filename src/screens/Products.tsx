@@ -33,6 +33,7 @@ const BLANK_FORM = {
   fractional: true,
   kind: "single" as "single" | "variable",
   imageUrl: "",
+  trackStock: false,
   /* What the form has done to the photograph, settled only on Save or Cancel:
      the picture this edit displaced, and the one it uploaded. Whichever the
      product does not end up wearing gets deleted, so an abandoned edit leaves
@@ -94,6 +95,7 @@ export default function Products() {
       fractional: unitFor(p).divisible,
       kind: p.kind,
       imageUrl: p.image_url || "",
+      trackStock: p.track_stock,
       imageRemoved: "",
       imageAdded: "",
       variants: (p.variants || []).map((v) => ({ name: v.name, sku: v.sku, price: String(v.price), stock: String(v.stock) })),
@@ -327,7 +329,9 @@ export default function Products() {
                     kind: p.kind === "variable" ? `${(p.variants || []).length} variants` : "Single",
                     sold: soldIn(p),
                     price: eff < Number(p.price) ? `${AUD(eff)} was ${AUD(Number(p.price))}` : `${AUD(Number(p.price))} / ${p.unit}`,
-                    stock: qtyText(p.kind === "variable" ? (p.variants || []).reduce((t, v) => t + Number(v.stock || 0), 0) : Number(p.stock), p.unit),
+                    stock: p.track_stock
+                      ? qtyText(p.kind === "variable" ? (p.variants || []).reduce((t, v) => t + Number(v.stock || 0), 0) : Number(p.stock), p.unit)
+                      : "—",
                   };
                 })}
                 dense
@@ -699,9 +703,29 @@ export default function Products() {
               {form.kind === "single" && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
                   <Input size="sm" label={`Price per ${form.unit}`} value={form.price} onChange={(e: any) => setPf({ price: e.target.value.replace(/[^0-9.]/g, "") })} suffix="AUD" placeholder="0.00" />
-                  <Input size="sm" label={`On hand (${form.unit})`} value={form.stock} onChange={(e: any) => setPf({ stock: e.target.value.replace(/[^0-9.]/g, "") })} placeholder="0" />
+                  {form.trackStock && (
+                    <Input size="sm" label={`On hand (${form.unit})`} value={form.stock} onChange={(e: any) => setPf({ stock: e.target.value.replace(/[^0-9.]/g, "") })} placeholder="0" />
+                  )}
                 </div>
               )}
+
+              {/* The catalogue arrived from an app that seeded stock rather than
+                  counting it, so every product starts untracked. Counting one
+                  for real is what turns this on. */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 11px", borderRadius: 8, background: "var(--surface-raised)", border: "1px solid var(--border-subtle)" }}>
+                <Switch
+                  checked={form.trackStock}
+                  onChange={(v: boolean) => setPf({ trackStock: v, stock: v ? form.stock : "0" })}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-primary)" }}>Count stock for this product</div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                    {form.trackStock
+                      ? "The on-hand figure shows on the catalogue and the dashboard watches it."
+                      : "The catalogue shows “stock not tracked” rather than a figure nobody has counted."}
+                  </div>
+                </div>
+              </div>
 
               {form.kind === "variable" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -778,9 +802,10 @@ export default function Products() {
                       category_id: form.categoryId || null,
                       unit: form.unit,
                       price: form.kind === "variable" ? variants[0].price : parseFloat(form.price) || 0,
-                      stock: form.kind === "variable" ? variants.reduce((t, v) => t + v.stock, 0) : parseFloat(form.stock) || 0,
+                      stock: !form.trackStock ? 0 : form.kind === "variable" ? variants.reduce((t, v) => t + v.stock, 0) : parseFloat(form.stock) || 0,
                       fractional: form.fractional,
                       kind: form.kind,
+                      track_stock: form.trackStock,
                       image_url: form.imageUrl.trim() || null,
                     },
                     variants

@@ -81,7 +81,11 @@ export default function Dashboard() {
     .sort((a, b) => b.revenue - a.revenue);
   const catRevTotal = catTotals.reduce((s, c) => s + c.revenue, 0) || 1;
 
+  /* Only products someone actually counts can be watched. The rest carry a
+     figure the old app seeded and never checked, which is how this panel came
+     to report nine million on hand and nine million days of cover. */
   const stockRows = movement
+    .filter((r) => r.p.track_stock)
     .map((r) => ({ r, days: r.q > 0 ? Number(r.p.stock) / (r.q / (period === "today" ? 1 : period === "week" ? 3 : 9)) : Infinity }))
     .sort((x, y) => x.days - y.days)
     .slice(0, 6)
@@ -91,6 +95,7 @@ export default function Dashboard() {
       stock: qtyText(Number(r.p.stock), r.p.unit),
       cover: Number(r.p.stock) === 0 ? "Out of stock" : days < 1 ? "Under a day" : Math.round(days) + (Math.round(days) === 1 ? " day" : " days"),
     }));
+  const untrackedMoved = movement.filter((r) => !r.p.track_stock).length;
 
   /* Today's run — deliveries in time order. */
   const runRows = live
@@ -222,7 +227,7 @@ export default function Dashboard() {
                       style={{
                         height: "100%",
                         width: pct + "%",
-                        background: Number(m.p.stock) < m.q ? "var(--feedback-warning)" : "var(--brand-primary)",
+                        background: m.p.track_stock && Number(m.p.stock) < m.q ? "var(--feedback-warning)" : "var(--brand-primary)",
                         borderRadius: 9999,
                       }}
                     />
@@ -281,7 +286,11 @@ export default function Dashboard() {
               ]}
               rows={stockRows}
               dense
-              emptyMessage="Nothing moved yet"
+              emptyMessage={
+                untrackedMoved > 0
+                  ? "Nothing here counts its stock yet — set an on-hand figure on a product to watch it"
+                  : "Nothing moved yet"
+              }
             />
           </div>
         </Card>
