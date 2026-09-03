@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { useApp } from "../store/store";
 import { AUD, qtyText } from "../lib/domain";
 import { Button, Card, DataTable, Select } from "../design-system/components.js";
+import HistoryNotice from "./HistoryNotice";
 
 export default function Reports() {
   const { orders, orderItems, customers, products, suburbs, team } = useApp();
@@ -89,6 +90,7 @@ export default function Reports() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <HistoryNotice what="These reports" />
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <Select
           size="sm"

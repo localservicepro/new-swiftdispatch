@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useApp } from "../store/store";
+import { Icon } from "../design-system/components.js";
 
 /* Admin PIN sign-in — super admins and admins only; a driver's PIN opens the
    driver portal, never this desk. */
@@ -103,8 +104,34 @@ export default function Login() {
             </div>
           ))}
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-faint)", textAlign: "center" }}>
-          Drivers sign in from the Driver portal, not here.
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, paddingTop: 4 }}>
+          <div style={{ fontSize: 11, color: "var(--text-faint)", textAlign: "center" }}>
+            Drivers sign in from the Driver portal, not here.
+          </div>
+          <a
+            href="#/driver"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              width: "100%",
+              height: 44,
+              borderRadius: 10,
+              border: "1px solid var(--border-default)",
+              background: "var(--surface-card)",
+              fontSize: 14,
+              fontWeight: 600,
+              color: "var(--text-primary)",
+              textDecoration: "none",
+            }}
+          >
+            <Icon name="truck" size={16} color="var(--brand-primary)" />
+            Driver sign-in
+          </a>
+          <a href="#/portal" style={{ fontSize: 12 }}>
+            Customer portal
+          </a>
         </div>
       </div>
     </div>

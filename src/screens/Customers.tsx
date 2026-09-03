@@ -1,9 +1,24 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store/store";
+import HistoryNotice from "./HistoryNotice";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
 import type { Customer } from "../lib/types";
-import { addContact, addSite, createCustomer, generateStatement, genPin, patchCustomer, removeContact } from "../data/api";
+import { applyCustomerImport, exportCustomersCsv, planCustomerImport, type ImportPlan } from "../data/customerIo";
+import ImportPreview, { type PreviewRow } from "./ImportPreview";
+import {
+  addContact,
+  addSite,
+  createCustomer,
+  generateStatement,
+  genPin,
+  monthLabel,
+  patchCustomer,
+  printStatement,
+  removeContact,
+  statementLines,
+  statementMonths,
+} from "../data/api";
 import {
   AddressBlock,
   Alert,
@@ -20,48 +35,67 @@ import {
   Tabs,
 } from "../design-system/components.js";
 
+const PAGE = 100;
+
 export default function Customers() {
   const ui = useUi();
   const app = useApp();
-  const { customers, suburbs, orders, orderItems, statements } = app;
+  const { customers, suburbs, orders, orderItems, statements, paySettings } = app;
 
   const [query, setQuery] = useState("");
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importPlan, setImportPlan] = useState<{ plan: ImportPlan; file: string } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [entityFilter, setEntityFilter] = useState("Everyone");
   const [billingFilter, setBillingFilter] = useState("All settlement");
+  const [shown, setShown] = useState(PAGE);
   const [selected, setSelected] = useState<string[]>([]);
   const [newCustOpen, setNewCustOpen] = useState(false);
-  const [statementModal, setStatementModal] = useState<{ month: "this" | "last"; scope: "all" | "delivered" } | null>(null);
+  const [statementModal, setStatementModal] = useState<{ month: string; scope: "all" | "delivered" } | null>(null);
   const [smsSent, setSmsSent] = useState<Record<string, string>>({});
 
   const cust = ui.custId ? customers.find((c) => c.id === ui.custId) || null : null;
   const cBlock = blockedState(cust);
 
   const q = query.trim().toLowerCase();
-  const rows = customers
-    .filter((c) => {
+  /* Two and a half thousand accounts, rebuilt and re-rendered on every
+     keystroke, is what made this tab hang. Filtering stays over everyone —
+     search has to reach the whole book — but only a screenful becomes rows. */
+  const matching = useMemo(
+    () =>
+      customers.filter((c) => {
       if (entityFilter !== "Everyone" && c.entity !== entityFilter) return false;
       if (billingFilter === "Prepaid" && c.billing !== "prepaid") return false;
       if (billingFilter === "Account" && c.billing !== "account") return false;
       if (billingFilter === "Blocked only" && !blockedState(c).blocked) return false;
-      if (!q) return true;
-      return (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
-        .toLowerCase()
-        .includes(q);
-    })
-    .map((c) => {
-      const bl = blockedState(c);
-      const ordersContact = c.contacts.find((x) => x.roles.includes("Orders")) || c.contacts[0];
-      return {
-        c,
-        bl,
-        contact: ordersContact?.name || "—",
-        phone: ordersContact?.phone || "—",
-        settle: c.billing === "account" ? `${c.terms_days} days account` : "Prepaid",
-        credit: c.billing === "account" ? `${AUD0(Number(c.balance))} / ${AUD0(Number(c.credit_limit))}` : "—",
-        state: bl.blocked ? "Blocked" : c.billing === "account" ? "Open" : "Prepaid",
-        portal: c.billing !== "account" ? "—" : c.portal_enabled ? "Enabled" : "Off",
-      };
-    });
+        if (!q) return true;
+        return (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
+          .toLowerCase()
+          .includes(q);
+      }),
+    [customers, entityFilter, billingFilter, q]
+  );
+
+  useEffect(() => setShown(PAGE), [query, entityFilter, billingFilter]);
+
+  const rows = useMemo(
+    () =>
+      matching.slice(0, shown).map((c) => {
+        const bl = blockedState(c);
+        const ordersContact = c.contacts.find((x) => x.roles.includes("Orders")) || c.contacts[0];
+        return {
+          c,
+          bl,
+          contact: ordersContact?.name || "—",
+          phone: ordersContact?.phone || "—",
+          settle: c.billing === "account" ? `${c.terms_days} days account` : "Prepaid",
+          credit: c.billing === "account" ? `${AUD0(Number(c.balance))} / ${AUD0(Number(c.credit_limit))}` : "—",
+          state: bl.blocked ? "Blocked" : c.billing === "account" ? "Open" : "Prepaid",
+          portal: c.billing !== "account" ? "—" : c.portal_enabled ? "Enabled" : "Off",
+        };
+      }),
+    [matching, shown]
+  );
 
   const custOrders = cust ? orders.filter((o) => o.customer_id === cust.id && !o.deleted_at && o.kind !== "split") : [];
   const custStatements = cust ? statements.filter((s) => s.customer_id === cust.id) : [];
@@ -88,6 +122,31 @@ export default function Customers() {
         </div>
         <Select size="sm" options={["Everyone", "Individual", "Sole trader", "Company"]} value={entityFilter} onChange={(e: any) => setEntityFilter(e.target.value)} style={{ width: 190, flexShrink: 0 }} />
         <Select size="sm" options={["All settlement", "Prepaid", "Account", "Blocked only"]} value={billingFilter} onChange={(e: any) => setBillingFilter(e.target.value)} style={{ width: 180, flexShrink: 0 }} />
+        <Button variant="outline" size="sm" iconLeft="download" onClick={() => {
+          const n = exportCustomersCsv();
+          app.toast({ tone: "success", title: `${n} ${n === 1 ? "customer" : "customers"} exported`, description: "The file is also the template the importer reads." });
+        }}>
+          Export CSV
+        </Button>
+        <Button variant="outline" size="sm" iconLeft="inbox" onClick={() => fileRef.current?.click()}>
+          Import CSV
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            try {
+              setImportPlan({ plan: planCustomerImport(await file.text()), file: file.name });
+            } catch (err) {
+              app.toast({ tone: "danger", title: "Could not read that file", description: String((err as Error).message) });
+            }
+          }}
+        />
         <Button variant="primary" size="sm" iconLeft="plus" onClick={() => setNewCustOpen(true)}>
           Add customer
         </Button>
@@ -188,6 +247,17 @@ export default function Customers() {
               No customers match these filters.
             </div>
           )}
+          {matching.length > rows.length && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--border-subtle)" }}>
+              <span className="tabular" style={{ fontSize: 12, color: "var(--text-faint)" }}>
+                Showing {rows.length.toLocaleString()} of {matching.length.toLocaleString()}
+              </span>
+              <div style={{ flex: 1 }} />
+              <Button variant="ghost" size="sm" iconLeft="chevron-down" onClick={() => setShown((n) => n + PAGE)}>
+                Show {Math.min(PAGE, matching.length - rows.length)} more
+              </Button>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -231,11 +301,11 @@ export default function Customers() {
               date: dmy(o.placed_at.slice(0, 10)),
               status: o.status.replace(/_/g, " "),
               payment: o.payment_status,
-              totalNum: orderTotal(o, orderItems[o.id] || [], suburbs),
+              totalNum: orderTotal(o, orderItems[o.id] || [], suburbs, paySettings),
             }))}
             custStatements={custStatements}
             suburbName={suburbName}
-            openStatement={() => setStatementModal({ month: "this", scope: "all" })}
+            openStatement={() => setStatementModal({ month: statementMonths()[0].value, scope: "all" })}
             smsSent={smsSent[cust.id]}
             sendSms={() => setSmsSent((prev) => ({ ...prev, [cust.id]: "Sent to the contact's mobile just now." }))}
             onNewOrder={() => ui.startOrder(cust.id)}
@@ -244,6 +314,53 @@ export default function Customers() {
         )}
       </div>
 
+      {importPlan && (
+        <ImportPreview
+          title="Import customers"
+          fileName={importPlan.file}
+          busy={importing}
+          tiles={[
+            { label: "New", value: importPlan.plan.creates, tone: "good" },
+            { label: "Updated", value: importPlan.plan.updates, tone: "info" },
+            { label: "Contacts", value: importPlan.plan.contacts, tone: "info" },
+            { label: "Skipped", value: importPlan.plan.rejects, tone: "bad" },
+          ]}
+          notes={
+            importPlan.plan.unknownColumns.length
+              ? [{ title: "Columns that were ignored", body: `${importPlan.plan.unknownColumns.join(", ")} — these do not match any customer field, so they were left alone.` }]
+              : []
+          }
+          rows={importPlan.plan.rows.map<PreviewRow>((r) => ({
+            line: r.line,
+            action: r.action === "reject" ? "Skip" : r.action === "create" ? "New" : r.action === "contact" ? "+ Contact" : "Update",
+            tone: r.action === "reject" ? "bad" : r.action === "create" ? "good" : "info",
+            label: r.name,
+            code: r.accountNumber || undefined,
+            trail: r.action === "contact" ? "→ account" : undefined,
+            reason: r.reason,
+            warnings: r.warnings,
+          }))}
+          actionWidth={68}
+          footNote="Rows are matched on account number. A blank account number always makes a new customer; a row with Contact of adds another person to that account."
+          writeCount={importPlan.plan.creates + importPlan.plan.updates + importPlan.plan.contacts}
+          onClose={() => setImportPlan(null)}
+          onConfirm={async () => {
+            setImporting(true);
+            const r = await applyCustomerImport(importPlan.plan);
+            setImporting(false);
+            setImportPlan(null);
+            if (r.failed.length)
+              app.toast({ tone: "danger", title: "Import did not finish", description: r.failed[0].error });
+            else
+              app.toast({
+                tone: "success",
+                title: `${r.created} added, ${r.updated} updated`,
+                description: importPlan.plan.rejects ? `${importPlan.plan.rejects} rows were skipped.` : undefined,
+              });
+          }}
+        />
+      )}
+
       {newCustOpen && <NewCustomerModal onClose={() => setNewCustOpen(false)} onCreated={(c) => ui.set({ custId: c.id, custTab: "overview" })} />}
 
       {statementModal && cust && (
@@ -251,8 +368,12 @@ export default function Customers() {
           cust={cust}
           state={statementModal}
           setState={setStatementModal}
-          onConfirm={() => {
+          onGenerate={() => {
             void generateStatement(cust, statementModal.month, statementModal.scope);
+            setStatementModal(null);
+          }}
+          onPrint={() => {
+            void printStatement(cust.id, statementModal.month, statementModal.scope);
             setStatementModal(null);
           }}
         />
@@ -596,6 +717,7 @@ function CustomerDrawer(props: {
 
         {tab === "orders" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <HistoryNotice what="This account's orders and lifetime total" />
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--text-muted)" }}>
               <span>
                 <span className="tabular" style={{ color: "var(--text-primary)", fontWeight: 600 }}>{custOrders.length}</span> orders
@@ -726,7 +848,12 @@ function CustomerDrawer(props: {
                         <span className="tabular" style={{ marginLeft: "auto", fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
                           {AUD(Number(s.amount))}
                         </span>
-                        <Button variant="ghost" size="sm" iconLeft="printer" onClick={() => window.print()}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconLeft="printer"
+                          onClick={() => void printStatement(cust.id, s.period_start.slice(0, 8) + "01", s.scope as "all" | "delivered")}
+                        >
                           Print
                         </Button>
                       </div>
@@ -903,23 +1030,27 @@ function StatementModal({
   cust,
   state,
   setState,
-  onConfirm,
+  onGenerate,
+  onPrint,
 }: {
   cust: Customer;
-  state: { month: "this" | "last"; scope: "all" | "delivered" };
-  setState: (s: { month: "this" | "last"; scope: "all" | "delivered" } | null) => void;
-  onConfirm: () => void;
+  state: { month: string; scope: "all" | "delivered" };
+  setState: (s: { month: string; scope: "all" | "delivered" } | null) => void;
+  onGenerate: () => void;
+  onPrint: () => void;
 }) {
-  const now = new Date();
-  const fmt = (y: number, m: number) => new Date(y, m, 1).toLocaleDateString("en-AU", { month: "short", year: "numeric" });
-  const periodLabel =
-    state.month === "this"
-      ? `1–${now.getDate()} ${fmt(now.getFullYear(), now.getMonth())}`
-      : (() => {
-          const lm = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
-          const ly = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-          return `1–${new Date(ly, lm + 1, 0).getDate()} ${fmt(ly, lm)}`;
-        })();
+  const months = statementMonths();
+  const periodLabel = monthLabel(state.month);
+  const lineCount = statementLines(
+    cust.id,
+    state.month,
+    (() => {
+      const d = new Date(state.month + "T00:00:00");
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+    })(),
+    state.scope
+  ).length;
 
   return (
     <div
@@ -938,15 +1069,12 @@ function StatementModal({
         </div>
         <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
-            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".09em", color: "var(--text-faint)", marginBottom: 6 }}>Period</div>
-            <Tabs
-              items={[
-                { id: "this", label: "This month" },
-                { id: "last", label: "Last month" },
-              ]}
-              activeId={state.month}
-              onSelect={(id: string) => setState({ ...state, month: id as any })}
-              variant="segmented"
+            <Select
+              size="sm"
+              label="Month"
+              options={months}
+              value={state.month}
+              onChange={(e: any) => setState({ ...state, month: e.target.value })}
             />
           </div>
           <div>
@@ -962,18 +1090,23 @@ function StatementModal({
             />
           </div>
           <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
-            {periodLabel} — {state.scope === "delivered" ? "delivered orders only" : "all orders"}.
+            {periodLabel} — {state.scope === "delivered" ? "delivered orders only" : "all orders"}.{" "}
+            {lineCount ? `${lineCount} ${lineCount === 1 ? "entry" : "entries"} on the statement.` : "Nothing on the account that month."}
           </div>
         </div>
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="ghost" size="md" onClick={() => setState(null)}>
             Cancel
           </Button>
-          <Button variant="primary" size="md" iconLeft="file-text" onClick={onConfirm}>
-            Generate statement
+          <Button variant="secondary" size="md" iconLeft="file-text" onClick={onGenerate}>
+            Generate
+          </Button>
+          <Button variant="primary" size="md" iconLeft="printer" onClick={onPrint}>
+            Print statement
           </Button>
         </div>
       </div>
     </div>
   );
 }
+

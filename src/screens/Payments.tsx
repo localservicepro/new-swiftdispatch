@@ -1,13 +1,17 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useApp } from "../store/store";
+import { useUi } from "../store/ui";
 import { AUD, AUD0, dmy } from "../lib/domain";
-import { PAYMENT_TYPE_LABEL } from "../lib/types";
+import { PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
 import { patchPaySettings } from "../data/api";
+import { pushContextFor, pushOrdersToMyob } from "../data/myob";
+import { pushBlockers, readyForMyob, readyReason } from "../lib/myob";
 import { Alert, Badge, Button, Card, DataTable, Input, Select, StatCard, Switch, Tabs } from "../design-system/components.js";
 
 export default function Payments() {
   const app = useApp();
-  const { payments, orders, customers, paySettings, statements } = app;
+  const ui = useUi();
+  const { payments, orders, customers, paySettings, statements, myob } = app;
   const [tab, setTab] = useState<"ledger" | "settings">("ledger");
   const [draft, setDraft] = useState<Record<string, any> | null>(null);
 
@@ -26,9 +30,15 @@ export default function Payments() {
   const failed = payments.filter((x) => x.status === "failed").reduce((s, x) => s + Number(x.amount), 0);
   const onStatement = payments.filter((x) => x.status === "invoiced").reduce((s, x) => s + Number(x.amount), 0);
 
+  /* Both of these are looked up per row, and one of the counts below walks
+     every order — with ten thousand of them against two and a half thousand
+     customers that is tens of millions of comparisons a render. Two maps. */
+  const orderById = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders]);
+  const custById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+
   const payRows = payments.map((x) => {
-    const o = orders.find((ord) => ord.id === x.order_id);
-    const c = customers.find((cu) => cu.id === x.customer_id);
+    const o = x.order_id ? orderById.get(x.order_id) : undefined;
+    const c = x.customer_id ? custById.get(x.customer_id) : undefined;
     const blocked = c && c.billing === "account" && (c.stop_credit || Number(c.balance) > Number(c.credit_limit));
     return {
       date: dmy((x.paid_at || x.created_at).slice(0, 10)),
@@ -45,7 +55,7 @@ export default function Payments() {
   const eligibleOrders = orders.filter((o) => !o.deleted_at && o.payment_type && o.payment_type !== "prepaid");
   const yardOnAccount = eligibleOrders.filter((o) => o.kind === "yard_sale").length;
   const blockedNoRel = orders.filter(
-    (o) => !o.deleted_at && customers.find((c) => c.id === o.customer_id)?.billing === "account" && !o.payment_type
+    (o) => !o.deleted_at && !o.payment_type && (o.customer_id ? custById.get(o.customer_id)?.billing : null) === "account"
   ).length;
 
   return (
@@ -109,16 +119,7 @@ export default function Payments() {
                   <div style={{ fontSize: 11, color: "var(--text-faint)" }}>{statements.length} statements issued so far.</div>
                 </div>
               </Card>
-              <Card title="MYOB" subtitle="Batch invoice push" padding="default">
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                    {payments.filter((x) => x.status === "invoiced").length} invoices queued for the next batch.
-                  </div>
-                  <Button variant="secondary" size="md" iconLeft="external-link" fullWidth>
-                    Push batch to MYOB
-                  </Button>
-                </div>
-              </Card>
+              <MyobBatchCard />
             </div>
           </div>
         </div>
@@ -211,11 +212,17 @@ export default function Payments() {
 
           <Card title="MYOB AccountRight" padding="default">
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <Badge tone="success" icon="badge-check">
-                Connected
+              <Badge tone={myob?.enabled ? "success" : "neutral"} icon={myob?.enabled ? "badge-check" : "circle"}>
+                {myob?.enabled ? "On" : "Off"}
               </Badge>
-              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>invoices push at 6:00 AM daily</span>
-              <Button variant="ghost" size="sm" iconLeft="external-link">
+              <span style={{ flex: "1 1 200px", minWidth: 0, fontSize: 13, color: "var(--text-muted)" }}>
+                {myob?.enabled
+                  ? `Sales go across as ${myob.push_as === "order" ? "orders" : "invoices"} on the ${myob.sale_layout} layout${
+                      myob.auto_push ? ", automatically once delivered" : ", when you push them"
+                    }.`
+                  : "Switch it on in Settings › Integrations to stop re-keying deliveries."}
+              </span>
+              <Button variant="ghost" size="sm" iconLeft="external-link" onClick={() => ui.navigateTo("settings")}>
                 Open integration settings
               </Button>
             </div>
@@ -247,5 +254,82 @@ export default function Payments() {
         </div>
       )}
     </div>
+  );
+}
+
+/* Batch push: every delivered order that MYOB hasn't seen yet. Orders that
+   can't go (no coding, nothing on them) are counted separately rather than
+   quietly dropped from the batch — a batch that says "12 sent" while silently
+   skipping four is how re-keying creeps back in. */
+function MyobBatchCard() {
+  const app = useApp();
+  const ui = useUi();
+  const { orders, myob } = app;
+  const [busy, setBusy] = useState(false);
+
+  const finished = orders.filter(readyForMyob);
+  const contexts = finished.map((o: Order) => pushContextFor(o)).filter(Boolean) as NonNullable<
+    ReturnType<typeof pushContextFor>
+  >[];
+  const ready = contexts.filter((c) => pushBlockers(c).length === 0);
+  const held = contexts.length - ready.length;
+  const off = !myob?.enabled;
+
+  /* Spelled out because "3 orders" hides that two of them were counter sales
+     nobody would think to look for under a delivery heading. */
+  const mix = ready.reduce<Record<string, number>>((acc, c) => {
+    const k = readyReason(c.order);
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+  const mixText = Object.entries(mix)
+    .map(([k, n]) => `${n} ${k}`)
+    .join(", ");
+
+  return (
+    <Card title="MYOB" subtitle="Batch push" padding="default">
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 13, color: "var(--text-muted)", textWrap: "pretty" as any }}>
+          {off
+            ? "The MYOB connection is switched off."
+            : ready.length
+              ? `${ready.length} finished ${ready.length === 1 ? "sale is" : "sales are"} ready to go across — ${mixText}.`
+              : "Nothing finished is waiting — everything MYOB hasn't seen is still open."}
+        </div>
+        {!off && (
+          <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+            Counter sales and pickups count as finished the moment the goods leave the yard, so they don't have to be
+            marked delivered first.
+          </div>
+        )}
+        {!off && held > 0 && (
+          <div style={{ fontSize: 11, color: "var(--attention)", textWrap: "pretty" as any }}>
+            {held} held back — {pushBlockers(contexts.find((c) => pushBlockers(c).length > 0)!)[0]}
+          </div>
+        )}
+        <Button
+          variant="secondary"
+          size="md"
+          iconLeft="external-link"
+          fullWidth
+          disabled={busy || off || !ready.length}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await pushOrdersToMyob(ready);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Sending…" : off ? "Switch MYOB on first" : `Push ${ready.length || ""} to MYOB`.trim()}
+        </Button>
+        {off && (
+          <Button variant="ghost" size="sm" iconLeft="settings" fullWidth onClick={() => ui.navigateTo("settings")}>
+            Open MYOB settings
+          </Button>
+        )}
+      </div>
+    </Card>
   );
 }

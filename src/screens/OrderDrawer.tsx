@@ -3,7 +3,9 @@ import { useApp } from "../store/store";
 import { useUi, nextStatusOptions } from "../store/ui";
 import {
   AUD,
+  adjustmentOf,
   feeOf,
+  resolvedSuburbFee,
   goodsOf,
   orderTotal,
   placedText,
@@ -22,6 +24,7 @@ import {
   moveOrder,
   patchOrder,
   patchSplit,
+  printReceipt,
   removeOrderItem,
   resetSplitToMaster,
   setOrderItemQty,
@@ -40,10 +43,12 @@ import {
   Tabs,
   Textarea,
 } from "../design-system/components.js";
+import AddressSearch from "./AddressSearch";
+import MyobPushButton from "./MyobPushButton";
 
 export default function OrderDrawer() {
   const ui = useUi();
-  const { orders, orderItems, suburbs, customers, trucks, team } = useApp();
+  const { orders, orderItems, suburbs, customers, trucks, team, paySettings } = useApp();
 
   const open = ui.drawerOpen;
   const sel = ui.selectedOrderId ? orders.find((o) => o.id === ui.selectedOrderId) : null;
@@ -54,7 +59,7 @@ export default function OrderDrawer() {
   const splits = master ? orders.filter((o) => o.parent_order_id === master.id && !o.deleted_at) : [];
   const customer = focus ? customers.find((c) => c.id === focus.customer_id) : null;
 
-  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs);
+  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
   const combined = master ? splits.reduce((s, x) => s + totalOf(x), 0) + goodsOf(orderItems[master.id] || []) : 0;
 
   const validTabs = isMaster ? ["splits", "items", "delivery", "payment"] : ["items", "delivery", "payment"];
@@ -76,7 +81,12 @@ export default function OrderDrawer() {
     const name = suburbName(o.suburb_id);
     if (!o.suburb_id) return "No suburb resolved — the delivery fee cannot be calculated.";
     if (rate.inactive) return `${name} is switched off in Suburbs, so no rate applies.`;
-    if (o.fee_source === "suburb") return `From the ${name} suburb rate (${AUD(rate.fee)}).`;
+    if (o.fee_source === "suburb") {
+      const r = resolvedSuburbFee(o.suburb_id, suburbs, paySettings);
+      return r.markup > 0
+        ? `From the ${name} rate (${AUD(r.base)}) + ${AUD(r.markup)} markup.`
+        : `From the ${name} suburb rate (${AUD(r.base)}).`;
+    }
     return `Set by hand — no longer tracking the ${name} rate of ${AUD(rate.fee)}.`;
   };
 
@@ -90,8 +100,24 @@ export default function OrderDrawer() {
             o.method === "delivery"
               ? "Delivery — " + (suburbName(o.suburb_id) || "no suburb")
               : "Pickup — no delivery fee",
-          value: AUD(o.method === "delivery" ? feeOf(o, suburbs) : 0),
+          value: AUD(o.method === "delivery" ? feeOf(o, suburbs, paySettings) : 0),
         },
+        ...(o.method === "delivery" && Number(o.fuel_surcharge) > 0
+          ? [{ label: "Fuel surcharge", value: AUD(Number(o.fuel_surcharge)) }]
+          : []),
+        ...(() => {
+          const adj = adjustmentOf(o, goodsOf(its));
+          if (!adj) return [];
+          return [
+            {
+              label:
+                (o.adjustment_type === "percent" ? `Adjustment — ${Math.abs(Number(o.adjustment_value))}% ` : "Adjustment — ") +
+                (adj < 0 ? "discount" : "surcharge"),
+              value: (adj < 0 ? "−" : "+") + AUD(Math.abs(adj)),
+              negative: adj < 0,
+            },
+          ];
+        })(),
         { label: "Includes GST", value: AUD(totalOf(o) / 11) },
       ],
       total: AUD(totalOf(o)),
@@ -204,13 +230,23 @@ export default function OrderDrawer() {
               </div>
             </div>
 
-            <div style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Button variant="secondary" size="sm" iconLeft="printer" onClick={() => markProcessed(focus.id)}>
-                Print receipt
-              </Button>
-              <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
-                Run sheet
-              </Button>
+            <div style={{ flexShrink: 0, padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Button variant="secondary" size="sm" iconLeft="printer" onClick={() => printReceipt(focus.id)}>
+                  {isMaster && splits.length > 1 ? `Print ${splits.length} invoices` : "Print receipt"}
+                </Button>
+                {isMaster && splits.length > 1 && (
+                  <Button variant="outline" size="sm" iconLeft="printer" onClick={() => printReceipt(focus.id, "combined")}>
+                    Print as one invoice
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
+                  Run sheet
+                </Button>
+              </div>
+              {/* Keyed so the doc-type choice and the re-send confirmation reset
+                  when the drawer swaps to a different order. */}
+              {!isMaster && sel && <MyobPushButton key={sel.id} order={sel} />}
             </div>
 
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -316,7 +352,7 @@ export default function OrderDrawer() {
                             suburb={suburbName(s.suburb_id)}
                             postcode={rate.postcode}
                             suburbId={rate.id}
-                            deliveryFee={AUD(feeOf(s, suburbs))}
+                            deliveryFee={AUD(feeOf(s, suburbs, paySettings))}
                             deliveryFeeSource={s.fee_source}
                             source="split"
                             verified
@@ -337,14 +373,14 @@ export default function OrderDrawer() {
                               options={suburbOptions}
                               value={s.suburb_id || ""}
                               onChange={(e: any) => {
-                                const r = suburbRate(e.target.value, suburbs);
-                                patchSplit(s.id, { suburb_id: e.target.value || null, delivery_fee: r.fee, fee_source: "suburb" }, "address");
+                                const r = resolvedSuburbFee(e.target.value, suburbs, paySettings);
+                                patchSplit(s.id, { suburb_id: e.target.value || null, delivery_fee: r.total, fee_source: "suburb" }, "address");
                               }}
                             />
                             <Input
                               size="sm"
                               label="Delivery fee"
-                              value={String(feeOf(s, suburbs).toFixed(2))}
+                              value={String(feeOf(s, suburbs, paySettings).toFixed(2))}
                               onChange={(e: any) =>
                                 patchSplit(s.id, { delivery_fee: Number(e.target.value) || 0, fee_source: "manual" }, "address")
                               }
@@ -385,7 +421,7 @@ export default function OrderDrawer() {
                             <AddLine orderId={s.id} options={addItemOptions} />
                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-faint)" }}>
                               <span>
-                                Goods {AUD(goodsOf(sItems))} · delivery {AUD(feeOf(s, suburbs))}
+                                Goods {AUD(goodsOf(sItems))} · delivery {AUD(feeOf(s, suburbs, paySettings))}
                               </span>
                               <span className="tabular" style={{ color: "var(--text-primary)", fontWeight: 600 }}>
                                 {AUD(totalOf(s))}
@@ -394,7 +430,7 @@ export default function OrderDrawer() {
                           </div>
 
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <Button variant="ghost" size="sm" iconLeft="printer" onClick={() => markProcessed(s.id)}>
+                            <Button variant="ghost" size="sm" iconLeft="printer" onClick={() => printReceipt(s.id)}>
                               Print this split
                             </Button>
                             <Button variant="ghost" size="sm" iconLeft="repeat" onClick={() => resetSplitToMaster(s.id)}>
@@ -447,7 +483,7 @@ export default function OrderDrawer() {
 
                       <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingTop: 8, borderTop: "1px solid var(--border-subtle)" }}>
                         <Row label="Goods" value={AUD(goodsOf(items))} />
-                        <Row label="Delivery" value={AUD(editTarget.method === "delivery" ? feeOf(editTarget, suburbs) : 0)} />
+                        <Row label="Delivery" value={AUD(editTarget.method === "delivery" ? feeOf(editTarget, suburbs, paySettings) : 0)} />
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 600, paddingTop: 4 }}>
                           <span style={{ color: "var(--text-primary)" }}>Total incl. GST</span>
                           <span className="tabular" style={{ color: "var(--text-primary)" }}>
@@ -549,7 +585,7 @@ export default function OrderDrawer() {
                             suburb={suburbName(editTarget.suburb_id)}
                             postcode={suburbRate(editTarget.suburb_id, suburbs).postcode}
                             suburbId={suburbRate(editTarget.suburb_id, suburbs).id}
-                            deliveryFee={AUD(feeOf(editTarget, suburbs))}
+                            deliveryFee={AUD(feeOf(editTarget, suburbs, paySettings))}
                             deliveryFeeSource={editTarget.fee_source}
                             source="manual"
                             verified
@@ -564,11 +600,19 @@ export default function OrderDrawer() {
                             }
                             onChange={() => {}}
                           />
-                          <Input
-                            size="sm"
-                            label="Street"
-                            value={editTarget.street || ""}
-                            onChange={(e: any) => patchOrder(editTarget.id, { street: e.target.value })}
+                          <AddressSearch
+                            street={editTarget.street || ""}
+                            suburbName={suburbName(editTarget.suburb_id)}
+                            suburbs={suburbs}
+                            onStreet={(v) => patchOrder(editTarget.id, { street: v })}
+                            onResolved={({ street, suburb }) => {
+                              if (suburb) {
+                                const r = resolvedSuburbFee(suburb.id, suburbs, paySettings);
+                                patchOrder(editTarget.id, { street, suburb_id: suburb.id, delivery_fee: r.total, fee_source: "suburb" });
+                              } else {
+                                patchOrder(editTarget.id, { street, suburb_id: null });
+                              }
+                            }}
                           />
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8 }}>
                             <Select
@@ -577,15 +621,15 @@ export default function OrderDrawer() {
                               options={suburbOptions}
                               value={editTarget.suburb_id || ""}
                               onChange={(e: any) => {
-                                const r = suburbRate(e.target.value, suburbs);
-                                patchOrder(editTarget.id, { suburb_id: e.target.value || null, delivery_fee: r.fee, fee_source: "suburb" });
+                                const r = resolvedSuburbFee(e.target.value, suburbs, paySettings);
+                                patchOrder(editTarget.id, { suburb_id: e.target.value || null, delivery_fee: r.total, fee_source: "suburb" });
                               }}
                               allowUnset
                             />
                             <Input
                               size="sm"
                               label="Delivery fee"
-                              value={feeOf(editTarget, suburbs).toFixed(2)}
+                              value={feeOf(editTarget, suburbs, paySettings).toFixed(2)}
                               onChange={(e: any) => patchOrder(editTarget.id, { delivery_fee: Number(e.target.value) || 0, fee_source: "manual" })}
                               suffix="AUD"
                             />

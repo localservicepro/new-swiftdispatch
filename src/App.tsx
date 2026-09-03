@@ -1,6 +1,6 @@
 import React from "react";
 import { useApp } from "./store/store";
-import { SidebarNav, Icon, Button, Toast } from "./design-system/components.js";
+import { SidebarNav, Icon, Button, Tabs, Toast } from "./design-system/components.js";
 import Login from "./screens/Login";
 import Dashboard from "./screens/Dashboard";
 import Board from "./screens/Board";
@@ -15,7 +15,10 @@ import Suburbs from "./screens/Suburbs";
 import Reports from "./screens/Reports";
 import Settings from "./screens/Settings";
 import OrderDrawer from "./screens/OrderDrawer";
+import Docs from "./screens/Docs";
+import AppIcon from "./screens/AppIcon";
 import { UiProvider, useUi } from "./store/ui";
+import { printReceipt, type PrintMode } from "./data/api";
 
 const SCREEN_META: Record<string, [string, string]> = {
   board: ["Dispatch board", "Six stages · sorted by delivery time, oldest booking first"],
@@ -46,6 +49,9 @@ function Shell() {
 
   const nav = ui.nav;
   const [title, subtitle] = SCREEN_META[nav] || SCREEN_META.board;
+  /* Lives here rather than in the ui store: nothing outside the shell opens it,
+     and it should not survive a navigation the way an in-progress order does. */
+  const [docsOpen, setDocsOpen] = React.useState(false);
 
   const navItems = [
     { section: "Operate" },
@@ -160,6 +166,27 @@ function Shell() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
             <div
+              onClick={() => setDocsOpen(true)}
+              title="Handbook — how each part of the app works"
+              style={{
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                height: 32,
+                padding: "0 10px",
+                flexShrink: 0,
+                borderRadius: 6,
+                border: "1px solid var(--border-subtle)",
+                background: "var(--surface-raised)",
+                color: "var(--text-muted)",
+                fontSize: 12,
+              }}
+            >
+              <AppIcon name="book-open" size={14} />
+              Handbook
+            </div>
+            <div
               onClick={() => setTheme(theme === "light" ? "dark" : "light")}
               title={theme === "light" ? "Switch to dark" : "Switch to light"}
               style={{
@@ -249,7 +276,9 @@ function Shell() {
       </div>
 
       <OrderDrawer />
+      {docsOpen && <Docs nav={nav} onClose={() => setDocsOpen(false)} />}
       <PendingNavModal />
+      <PrintPromptModal />
 
       {/* Toasts */}
       <div
@@ -268,6 +297,93 @@ function Shell() {
         {toasts.map((t) => (
           <Toast key={t.id} tone={t.tone} title={t.title} description={t.description} onDismiss={() => dismissToast(t.id)} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* Raised the moment an order is created, so the tax invoice can be printed
+   carrying its real number rather than a "not yet created" placeholder. Skipping
+   is a first-class answer — plenty of orders never need a printed docket, and
+   Print receipt on the order does the same job later. */
+function PrintPromptModal() {
+  const ui = useUi();
+  const [mode, setMode] = React.useState<PrintMode>("separate");
+  const p = ui.printPrompt;
+  if (!p) return null;
+  const close = () => ui.set({ printPrompt: null });
+
+  return (
+    <div
+      onClick={close}
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 30,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: "rgba(6,7,15,.72)",
+        backdropFilter: "blur(10px) saturate(140%)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(460px,100%)",
+          borderRadius: 16,
+          background: "var(--surface-card)",
+          border: "1px solid var(--border-default)",
+          boxShadow: "0 24px 64px rgba(0,0,0,.6)",
+        }}
+      >
+        <div style={{ padding: "16px 16px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Icon name="badge-check" size={15} color="var(--feedback-success)" />
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>
+              {p.orderNumber}
+            </span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>created</span>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 6, textWrap: "pretty" as any }}>
+            {p.splits > 1
+              ? `${p.splits} deliveries under one master order. Print the tax invoice now, or skip and print it later from the order.`
+              : "Print the tax invoice now, or skip and print it later from the order."}
+          </div>
+        </div>
+
+        {p.splits > 1 && (
+          <div style={{ padding: "14px 16px 0" }}>
+            <Tabs
+              items={[
+                { id: "separate", label: `One per delivery — ${p.splits} pages` },
+                { id: "combined", label: "One invoice for the lot" },
+              ]}
+              activeId={mode}
+              onSelect={(id: string) => setMode(id as PrintMode)}
+              variant="segmented"
+              fullWidth
+            />
+          </div>
+        )}
+
+        <div style={{ padding: 16, display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <Button variant="ghost" size="md" onClick={close}>
+            Skip
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            iconLeft="printer"
+            onClick={() => {
+              printReceipt(p.orderId, mode);
+              close();
+            }}
+          >
+            Print tax invoice
+          </Button>
+        </div>
       </div>
     </div>
   );

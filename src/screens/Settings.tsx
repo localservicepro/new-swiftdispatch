@@ -3,23 +3,11 @@ import { useApp } from "../store/store";
 import { useUi } from "../store/ui";
 import { patchBusiness, patchEmailSetting, patchIntegration } from "../data/api";
 import { Alert, Badge, Button, Card, Icon, Input, Switch, Tabs, Textarea } from "../design-system/components.js";
+import MyobSettings from "./MyobSettings";
 
+/* MYOB is not a generic connector — it has its own panel below, because the
+   office configures the coding and the line wording, not just an API key. */
 const INTEGRATION_META = [
-  {
-    key: "myob",
-    name: "MYOB",
-    icon: "file-text",
-    iconColor: "var(--brand-secondary)",
-    what: "Pushes invoices and credit notes to your ledger",
-    accountLabel: "MYOB file",
-    connectHint: "Sign in to MYOB to push invoices instead of re-keying them.",
-    syncLabel: "Batch invoice push",
-    syncHint: "Every invoiced order goes across on the next run.",
-    fields: [
-      { label: "Company file", key: "field_a" },
-      { label: "Push schedule", key: "field_b" },
-    ],
-  },
   {
     key: "mycrmsim",
     name: "MyCRMSim",
@@ -64,7 +52,7 @@ const EMAIL_META: Record<string, { label: string; hint: string }> = {
 
 export default function Settings() {
   const ui = useUi();
-  const { business, integrations, emails, user } = useApp();
+  const { business, integrations, emails, user, myob } = useApp();
   const [tab, setTab] = useState<"business" | "integrations" | "email">("business");
   const [saved, setSaved] = useState("");
   const [biz, setBiz] = useState<Record<string, string> | null>(null);
@@ -73,7 +61,8 @@ export default function Settings() {
   const b = { ...business, ...(biz || {}) } as any;
   const setB = (patch: Record<string, string>) => setBiz((d) => ({ ...(d || {}), ...patch }));
 
-  const connectedCount = integrations.filter((i) => i.connected).length;
+  const connectedCount =
+    integrations.filter((i) => i.key !== "myob" && i.connected).length + (myob?.enabled ? 1 : 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 1100 }}>
@@ -154,6 +143,35 @@ export default function Settings() {
             </div>
           </Card>
 
+          <Card title="Statement payment details" subtitle="Printed at the foot of every statement" padding="default">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+                <Input size="sm" label="Bank" value={b.bank_name || ""} placeholder="NAB" onChange={(e: any) => setB({ bank_name: e.target.value })} />
+                <Input size="sm" label="Account name" value={b.bank_account_name || ""} onChange={(e: any) => setB({ bank_account_name: e.target.value })} />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+                <Input size="sm" label="BSB" value={b.bank_bsb || ""} placeholder="083 153" onChange={(e: any) => setB({ bank_bsb: e.target.value })} />
+                <Input size="sm" label="Account number" value={b.bank_account_no || ""} onChange={(e: any) => setB({ bank_account_no: e.target.value })} />
+              </div>
+              <Input
+                size="sm"
+                label="Payment reference note"
+                value={b.payment_reference_note || ""}
+                onChange={(e: any) => setB({ payment_reference_note: e.target.value })}
+              />
+              <Input
+                size="sm"
+                label="Card surcharge note"
+                value={b.card_surcharge_note || ""}
+                onChange={(e: any) => setB({ card_surcharge_note: e.target.value })}
+              />
+              <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                Leave a field blank and it drops off the statement rather than printing an empty label. Save with the
+                button above.
+              </div>
+            </div>
+          </Card>
+
           <Card title="Where the rest lives" padding="default">
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {[
@@ -176,6 +194,7 @@ export default function Settings() {
 
       {tab === "integrations" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <MyobSettings onSaved={setSaved} />
           {INTEGRATION_META.map((meta) => {
             const s = integrations.find((i) => i.key === meta.key);
             if (!s) return null;

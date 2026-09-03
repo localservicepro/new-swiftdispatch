@@ -1,10 +1,12 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { blankDraft, useApp, type CartLine, type DeliveryDraft } from "../store/store";
 import { useUi } from "../store/ui";
 import {
   AUD,
   AUD0,
   blockedState,
+  fuelOf,
+  resolvedSuburbFee,
   customerBadgeType,
   dmy,
   isoFromDmy,
@@ -18,28 +20,35 @@ import {
   WINDOWS_60,
 } from "../lib/domain";
 import { PAYMENT_METHODS } from "../lib/types";
+import type { OrderItem } from "../lib/types";
 import { addContact, createOrder } from "../data/api";
 import {
   Alert,
+  Badge,
   Button,
   Card,
   Icon,
   Input,
   PaymentSummary,
-  ProductTile,
   Select,
   StatusBadge,
   StepProgress,
   Tabs,
   Textarea,
 } from "../design-system/components.js";
+import AddressSearch from "./AddressSearch";
+import ProductCard from "./ProductCard";
+import CategoryPicker from "./CategoryPicker";
+
+/* Product cards drawn before "Show more". */
+const PRODUCT_PAGE = 36;
 
 const CHIP_HUES = ["var(--brand-primary)", "var(--brand-secondary)", "var(--status-loading)", "var(--status-enroute)"];
 
 export default function NewOrder() {
   const ui = useUi();
   const app = useApp();
-  const { products, categories, specials, customers, suburbs, trucks } = app;
+  const { products, categories, specials, customers, suburbs, trucks, paySettings, business, orderItems } = app;
 
   const yard = ui.orderMode === "yardsale";
   const drafts = ui.drafts;
@@ -49,6 +58,9 @@ export default function NewOrder() {
 
   const [catFilter, setCatFilter] = useState("All");
   const [prodQuery, setProdQuery] = useState("");
+  /* Nine hundred cards with photographs is not something to mount while someone
+     is trying to take an order. */
+  const [shownProducts, setShownProducts] = useState(PRODUCT_PAGE);
   const [custQuery, setCustQuery] = useState("");
   const [contactAddOpen, setContactAddOpen] = useState(false);
   const [newContact, setNewContact] = useState({ name: "", phone: "" });
@@ -69,8 +81,10 @@ export default function NewOrder() {
 
   const activeDraft = drafts.some((d) => d.letter === ui.activeDraft) ? ui.activeDraft : drafts[0].letter;
 
+  /* Fee charged = suburb rate + markup (Payments › Settings). A hand-typed fee
+     is taken as-is. Fuel surcharge is its own line, never folded into the fee. */
   const draftFeeOf = (d: DeliveryDraft) =>
-    d.feeSource === "manual" ? Number(d.fee) || 0 : suburbRate(d.suburbId, suburbs).fee || 0;
+    d.feeSource === "manual" ? Number(d.fee) || 0 : resolvedSuburbFee(d.suburbId, suburbs, paySettings).total;
 
   const lines = cart.map((l, index) => {
     const p = product(l.productId)!;
@@ -79,10 +93,18 @@ export default function NewOrder() {
   });
   const goods = lines.reduce((s, l) => s + l.lineTotal, 0);
   const feeTotal = yard || !isDelivery ? 0 : drafts.reduce((s, d) => s + draftFeeOf(d), 0);
+  const fuelTotal = yard || !isDelivery ? 0 : fuelOf(paySettings) * drafts.length;
   const [adjustValue, setAdjustValue] = useState("");
   const adjustNum = parseFloat(adjustValue) || 0;
-  const adjust = ui.adjustType === "Percent" ? -goods * (adjustNum / 100) : -adjustNum;
-  const total = goods + feeTotal + adjust;
+  /* An adjustment goes either way: a discount off the goods or a surcharge on
+     top. The value stored on the order is signed — negative discounts. */
+  const adjustSigned = ui.adjustDirection === "surcharge" ? adjustNum : -adjustNum;
+  const adjust = ui.adjustType === "Percent" ? Math.round(goods * adjustSigned) / 100 : adjustSigned;
+  const isSurcharge = ui.adjustDirection === "surcharge";
+  const adjustLabel =
+    (ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}% ` : "Adjustment — ") +
+    (isSurcharge ? "surcharge" : "discount");
+  const total = goods + feeTotal + fuelTotal + adjust;
 
   const setCart = (next: CartLine[]) => ui.set({ cart: next });
   const setDrafts = (next: DeliveryDraft[]) => ui.set({ drafts: next });
@@ -178,12 +200,43 @@ export default function NewOrder() {
     setContactAddOpen(false);
   };
 
-  const catNames = ["All", ...categories.map((c) => c.name)];
+  /* Categories ranked by how often the yard actually orders out of them, from
+     the line items already in the store. Two categories carry three quarters of
+     everything sold here, so an alphabetical list buries the ones in daily use
+     behind the ones nobody has touched in a year.
+
+     A fresh install has no order history to rank by, and during the first
+     seconds after sign-in only the recent window is loaded — which is the
+     better signal anyway. Either way it falls back to how many products a
+     category holds, so the row is never arbitrary. */
+  const categoryOptions = useMemo(() => {
+    const byCategory = new Map<string, { weight: number; products: number }>();
+    for (const c of categories) byCategory.set(c.id, { weight: 0, products: 0 });
+
+    const categoryOf = new Map(products.map((p) => [p.id, p.category_id]));
+    for (const p of products) {
+      const e = p.category_id ? byCategory.get(p.category_id) : undefined;
+      if (e) e.products += 1;
+    }
+    for (const lines of Object.values(orderItems) as OrderItem[][]) {
+      for (const i of lines) {
+        const cid = i.product_id ? categoryOf.get(i.product_id) : null;
+        const e = cid ? byCategory.get(cid) : undefined;
+        if (e) e.weight += 1;
+      }
+    }
+    return categories.map((c) => {
+      const e = byCategory.get(c.id)!;
+      return { name: c.name, weight: e.weight || e.products / 1000, products: e.products };
+    });
+  }, [categories, products, orderItems]);
   const pq = prodQuery.trim().toLowerCase();
   const visibleProducts = products.filter((p) => {
     if (catFilter !== "All" && catName(p.category_id) !== catFilter) return false;
     return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
   });
+
+  useEffect(() => setShownProducts(PRODUCT_PAGE), [prodQuery, catFilter]);
 
   const perDraft = drafts.map((d) => ({
     letter: d.letter,
@@ -213,11 +266,16 @@ export default function NewOrder() {
       });
     });
   }
+  if (fuelTotal > 0)
+    summaryLines.push({
+      label: "Fuel surcharge" + (drafts.length > 1 ? ` — ${drafts.length} deliveries` : ""),
+      value: AUD(fuelTotal),
+    });
   if (adjustNum > 0)
     summaryLines.push({
-      label: ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}%` : "Adjustment — flat",
-      value: "−" + AUD(Math.abs(adjust)),
-      negative: true,
+      label: adjustLabel,
+      value: (adjust < 0 ? "−" : "+") + AUD(Math.abs(adjust)),
+      negative: adjust < 0,
     });
   summaryLines.push({ label: "Includes GST", value: AUD(total / 11) });
 
@@ -240,12 +298,14 @@ export default function NewOrder() {
       orderNotes: ui.orderNotesDraft,
       deliveryNotes: ui.deliveryNotesDraft,
       adjustmentType: adjustNum > 0 ? (ui.adjustType === "Percent" ? "percent" : "amount") : null,
-      adjustmentValue: adjustNum > 0 ? adjustNum : null,
+      adjustmentValue: adjustNum > 0 ? adjustSigned : null,
+      fuelSurcharge: yard || !isDelivery ? 0 : fuelOf(paySettings),
     });
     setCreating(false);
     if (order) {
-      app.toast({ tone: "success", title: `${order.order_number} created`, description: yard ? "Docket printed at the counter." : undefined });
+      app.toast({ tone: "success", title: `${order.order_number} created` });
       ui.set({
+        printPrompt: { orderId: order.id, orderNumber: order.order_number, splits: isSplitDraft ? drafts.length : 0 },
         nav: yard ? "neworder" : "board",
         cart: [],
         drafts: [blankDraft("A")],
@@ -278,6 +338,42 @@ export default function NewOrder() {
 
   const suburbOptions = suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }));
   const truckOptions = trucks.map((t) => ({ value: t.id, label: `${t.rego} — ${t.type}` }));
+
+  /* One adjustment, edited from either step: direction (discount or surcharge),
+     amount, and whether that amount is a percentage of goods or dollars. */
+  const AdjustmentFields = () => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <Tabs
+        items={[
+          { id: "discount", label: "Discount" },
+          { id: "surcharge", label: "Surcharge" },
+        ]}
+        activeId={ui.adjustDirection}
+        onSelect={(id: string) => ui.set({ adjustDirection: id as "discount" | "surcharge" })}
+        variant="segmented"
+        fullWidth
+      />
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 100 }}>
+          <Input
+            size="sm"
+            label="Adjustment"
+            aria-label="Adjustment value"
+            value={adjustValue}
+            onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))}
+          />
+        </div>
+        <Select
+          size="sm"
+          label="Type"
+          options={["Percent", "Dollars"]}
+          value={ui.adjustType}
+          onChange={(e: any) => ui.set({ adjustType: e.target.value })}
+          style={{ width: 118, flexShrink: 0 }}
+        />
+      </div>
+    </div>
+  );
 
   const customerPickerCard = (
     <Card
@@ -638,51 +734,96 @@ export default function NewOrder() {
                   </div>
                 </div>
 
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {catNames.map((label) => {
-                    const on = catFilter === label;
-                    return (
-                      <div
-                        key={label}
-                        onClick={() => setCatFilter(label)}
-                        style={{
-                          cursor: "pointer",
-                          fontSize: 12,
-                          padding: "5px 11px",
-                          borderRadius: 9999,
-                          border: `1px solid ${on ? "var(--border-strong)" : "var(--border-subtle)"}`,
-                          background: on ? "var(--surface-active)" : "transparent",
-                          color: on ? "var(--text-primary)" : "var(--text-muted)",
-                        }}
-                      >
-                        {label}
-                      </div>
-                    );
-                  })}
-                </div>
+                <CategoryPicker options={categoryOptions} value={catFilter} onChange={setCatFilter} />
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: 10 }}>
-                  {visibleProducts.map((p) => (
-                    <ProductTile
-                      key={p.id}
-                      name={p.name}
-                      sku={p.sku}
-                      price={AUD0(priceOf(p.id))}
-                      unit={p.unit}
-                      quantity={cart.find((l) => l.productId === p.id && l.to === activeDraft)?.qty || 0}
-                      onAdd={() => addProduct(p.id)}
-                      onRemove={() => {
-                        const idx = cart.findIndex((l) => l.productId === p.id && l.to === activeDraft);
-                        if (idx >= 0) bumpLine(idx, -1);
-                      }}
-                    />
-                  ))}
+                <div className="product-grid-wrap">
+                  <div className="product-grid">
+                    {visibleProducts.slice(0, shownProducts).map((p) => {
+                      const inCart = cart.find((l) => l.productId === p.id && l.to === activeDraft)?.qty || 0;
+                      const eff = priceOf(p.id);
+                      /* Only a counted product can be out of one. */
+                      const out = p.track_stock && p.kind !== "variable" && Number(p.stock) <= 0;
+                      return (
+                        <ProductCard
+                          key={p.id}
+                          p={p}
+                          effective={eff}
+                          compact
+                          selected={inCart > 0}
+                          onClick={() => addProduct(p.id)}
+                          badges={
+                            <>
+                              {eff < Number(p.price) && <Badge tone="success">Special</Badge>}
+                              {out && <Badge tone="warning">None on hand</Badge>}
+                            </>
+                          }
+                          corner={
+                            inCart > 0 ? (
+                              <span
+                                className="tabular"
+                                style={{
+                                  display: "inline-block",
+                                  padding: "3px 9px",
+                                  borderRadius: 9999,
+                                  background: "var(--brand-primary)",
+                                  color: "#fff",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  boxShadow: "0 2px 8px rgba(0,0,0,.45)",
+                                }}
+                              >
+                                {qtyText(inCart, p.unit)} in order
+                              </span>
+                            ) : null
+                          }
+                          footer={
+                            inCart > 0 ? (
+                              /* The stepper is the one place a tap must not add
+                                 another unit, so it swallows the card's click. */
+                              <div
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, paddingTop: 2 }}
+                              >
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  iconLeft="minus"
+                                  onClick={() => {
+                                    const idx = cart.findIndex((l) => l.productId === p.id && l.to === activeDraft);
+                                    if (idx >= 0) bumpLine(idx, -1);
+                                  }}
+                                />
+                                <span className="tabular" style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-secondary)" }}>
+                                  {qtyText(inCart, p.unit)}
+                                </span>
+                                <Button variant="outline" size="sm" iconLeft="plus" onClick={() => addProduct(p.id)} />
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: 11, color: "var(--text-faint)", paddingTop: 2 }}>Tap to add</div>
+                            )
+                          }
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
+                {visibleProducts.length === 0 && (
+                  <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
+                    No products match that search.
+                  </div>
+                )}
+                {visibleProducts.length > shownProducts && (
+                  <div style={{ display: "flex", justifyContent: "center" }}>
+                    <Button variant="outline" size="sm" iconLeft="chevron-down" onClick={() => setShownProducts((n) => n + PRODUCT_PAGE)}>
+                      Show {Math.min(PRODUCT_PAGE, visibleProducts.length - shownProducts)} more of {visibleProducts.length}
+                    </Button>
+                  </div>
+                )}
               </div>
             </Card>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: "1 1 320px", minWidth: 290, maxWidth: 400 }}>
+          <div className="order-cart" style={{ display: "flex", flexDirection: "column", gap: 12, flex: "1 1 320px", minWidth: 290, maxWidth: 400 }}>
             {customerPickerCard}
 
             <Card title={yard ? "Counter sale" : "Cart"} subtitle={isSplitDraft ? "Tap a letter to move that line to the next delivery" : undefined} padding="default">
@@ -773,19 +914,7 @@ export default function NewOrder() {
                     No items yet. Tap a product to load it in.
                   </div>
                 )}
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ flex: 1, minWidth: 100 }}>
-                    <Input size="sm" label="Adjustment" value={adjustValue} onChange={(e: any) => setAdjustValue(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="" />
-                  </div>
-                  <Select
-                    size="sm"
-                    label="Type"
-                    options={["Percent", "Dollars"]}
-                    value={ui.adjustType}
-                    onChange={(e: any) => ui.set({ adjustType: e.target.value })}
-                    style={{ width: 118, flexShrink: 0 }}
-                  />
-                </div>
+                <AdjustmentFields />
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 10, borderTop: "1px solid var(--border-subtle)" }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
                     <span style={{ fontSize: 12, color: "var(--text-faint)" }}>Lines</span>
@@ -793,17 +922,29 @@ export default function NewOrder() {
                       {lines.length}
                     </span>
                   </div>
+                  {adjustNum > 0 && (
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+                      <span style={{ fontSize: 12, color: "var(--text-faint)" }}>{adjustLabel}</span>
+                      <span
+                        className="tabular"
+                        style={{ fontSize: 12, fontWeight: 500, color: adjust < 0 ? "var(--feedback-success)" : "var(--attention)" }}
+                      >
+                        {adjust < 0 ? "−" : "+"}
+                        {AUD(Math.abs(adjust))}
+                      </span>
+                    </div>
+                  )}
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
                     <span style={{ fontSize: 18, color: "var(--text-primary)" }}>Subtotal</span>
                     <span className="tabular" style={{ fontSize: 18, fontWeight: 600, color: "var(--text-primary)" }}>
-                      {AUD(goods)}
+                      {AUD(goods + adjust)}
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
                     {lines.length
                       ? yard
                         ? "Delivery is not charged on a counter sale. Payment comes next."
-                        : "Delivery fees and any adjustment are added on the next step."
+                        : "Delivery fees are added on the next step."
                       : "Tap a product to start the order."}
                   </div>
                   <Button variant="primary" size="lg" iconLeft="arrow-right" fullWidth disabled={lines.length === 0} onClick={() => lines.length && ui.set({ orderStep: 2 })}>
@@ -944,7 +1085,23 @@ export default function NewOrder() {
                                     }}
                                   />
                                 )}
-                                <Input size="sm" label="Street" value={d.street} onChange={(e: any) => patchDraft(d.letter, { street: e.target.value })} />
+                                <AddressSearch
+                                  street={d.street}
+                                  suburbName={suburbNm}
+                                  suburbs={suburbs}
+                                  onStreet={(v) => patchDraft(d.letter, { street: v })}
+                                  onResolved={({ street: st, suburb, suburbName: nm }) => {
+                                    if (suburb) {
+                                      const r = suburbRate(suburb.id, suburbs);
+                                      patchDraft(d.letter, { street: st, suburbId: suburb.id, fee: r.fee, feeSource: "suburb" });
+                                    } else {
+                                      /* Unknown suburb: keep the typed address, suburb stays a manual pick.
+                                         The field shows the warning inline. */
+                                      patchDraft(d.letter, { street: st, suburbId: null, fee: 0, feeSource: "suburb" });
+                                      void nm;
+                                    }
+                                  }}
+                                />
                                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 6 }}>
                                   <Select
                                     size="sm"
@@ -979,7 +1136,10 @@ export default function NewOrder() {
                                     : rate.inactive
                                       ? `${suburbNm} is switched off in Suburbs, so no rate applies. Turn it back on or pick another suburb.`
                                       : d.feeSource === "suburb"
-                                        ? `From the ${suburbNm} suburb rate (${AUD(rate.fee)}).`
+                                        ? `From the ${suburbNm} rate (${AUD(rate.fee)})` +
+                                          (resolvedSuburbFee(d.suburbId, suburbs, paySettings).markup > 0
+                                            ? ` + ${AUD(resolvedSuburbFee(d.suburbId, suburbs, paySettings).markup)} markup.`
+                                            : ".")
                                         : `Set by hand — no longer tracking the ${suburbNm} rate of ${AUD(rate.fee)}.`}
                                 </div>
                               </>
@@ -1100,8 +1260,10 @@ export default function NewOrder() {
               )}
             </div>
 
-            <div style={{ flex: "1 1 280px", minWidth: 280, maxWidth: 380, position: "sticky", top: 0, maxHeight: "calc(100vh - 88px)", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* The summary column flows with the page — an inner scroll area here
+                clipped the notes fields behind the sticky footer. */}
+            <div style={{ flex: "1 1 280px", minWidth: 280, maxWidth: 380, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <PaymentSummary
                   lines={summaryLines}
                   total={AUD(total)}
@@ -1134,6 +1296,7 @@ export default function NewOrder() {
                         record.
                       </div>
                     </div>
+                    <AdjustmentFields />
                     <Input size="sm" label="PO number" value={ui.poNumber} onChange={(e: any) => ui.set({ poNumber: e.target.value })} placeholder="Customer's PO reference" />
                     <Textarea
                       size="sm"
@@ -1182,18 +1345,9 @@ export default function NewOrder() {
                         ? `Create ${drafts.length} split orders`
                         : "Create order"}
                 </Button>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <Button variant="ghost" size="md" iconLeft="arrow-left" fullWidth onClick={() => ui.set({ orderStep: 1 })}>
-                      Back
-                    </Button>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Button variant="outline" size="md" iconLeft="printer" fullWidth onClick={() => window.print()}>
-                      Print
-                    </Button>
-                  </div>
-                </div>
+                <Button variant="ghost" size="md" iconLeft="arrow-left" fullWidth onClick={() => ui.set({ orderStep: 1 })}>
+                  Back
+                </Button>
                 <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
                   {yard
                     ? "Enter takes the payment and prints the docket."

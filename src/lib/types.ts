@@ -86,6 +86,10 @@ export interface Product {
   kind: "single" | "variable";
   price: number;
   stock: number;
+  /* Whether `stock` is a real count. False for everything carried over from the
+     old app, which seeded a round number per product and decremented it as
+     things sold — so the figure is a leftover, not something to show anyone. */
+  track_stock: boolean;
   image_url: string | null;
   active: boolean;
   variants?: ProductVariant[];
@@ -163,6 +167,7 @@ export interface Customer {
   billing_suburb_id: string | null;
   portal_enabled: boolean;
   portal_pin: string | null;
+  myob_uid: string | null;
   contacts: CustomerContact[];
   sites: CustomerSite[];
 }
@@ -209,6 +214,14 @@ export interface Order {
   adjustment_value: number | null;
   processed_at: string | null;
   overrides: Record<string, boolean>;
+  fuel_surcharge: number;
+  pod_photo_url: string | null;
+  pod_at: string | null;
+  myob_uid: string | null;
+  myob_doc_type: "order" | "invoice" | null;
+  myob_number: string | null;
+  myob_pushed_at: string | null;
+  myob_error: string | null;
   deleted_at: string | null;
 }
 
@@ -247,6 +260,13 @@ export interface BusinessSettings {
   doc_format: string;
   master_prefix: string;
   print_delivery_notes: boolean;
+  /* Printed at the foot of a statement so customers know where to pay. */
+  bank_name: string | null;
+  bank_account_name: string | null;
+  bank_bsb: string | null;
+  bank_account_no: string | null;
+  payment_reference_note: string | null;
+  card_surcharge_note: string | null;
 }
 
 export interface PaymentSettings {

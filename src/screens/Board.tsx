@@ -17,12 +17,19 @@ import type { Order, OrderStatus } from "../lib/types";
 import { assignCrew, moveOrder } from "../data/api";
 import { Card, DataTable, Icon, Input, OrderCard, Select, Tabs, Button } from "../design-system/components.js";
 
+/* Cards drawn per lane before "Show more". The stage counts in the headers are
+   always the real ones — this only bounds how much of a lane becomes DOM. */
+const LANE_PAGE = 100;
+
 export default function Board() {
   const ui = useUi();
-  const { orders, orderItems, suburbs, customers, trucks, team } = useApp();
+  const { orders, orderItems, suburbs, customers, trucks, team, paySettings } = useApp();
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [query, setQuery] = useState("");
   const [dragging, setDragging] = useState<{ id: string; from: OrderStatus } | null>(null);
+  /* How many cards each lane is currently drawing. A busy Monday can put a few
+     hundred orders in one stage, and every card is a fair amount of DOM. */
+  const [shown, setShown] = useState<Partial<Record<OrderStatus, number>>>({});
   const [assignTruck, setAssignTruck] = useState<string>("");
   const [assignDriver, setAssignDriver] = useState<string>("");
 
@@ -32,7 +39,8 @@ export default function Board() {
   );
 
   const masters = useMemo(() => new Map(orders.filter((o) => o.kind === "master").map((o) => [o.id, o])), [orders]);
-  const customerOf = (o: Order) => customers.find((c) => c.id === o.customer_id);
+  const custById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const customerOf = (o: Order) => (o.customer_id ? custById.get(o.customer_id) : undefined);
   const truckLabel = (id: string | null) => {
     const t = trucks.find((x) => x.id === id);
     return t ? `${t.rego}` : undefined;
@@ -56,20 +64,24 @@ export default function Board() {
     return hay.includes(q);
   };
 
-  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs);
+  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
 
   let boardCount = 0;
   let boardValue = 0;
 
   const lanes = LANES.map((lane) => {
-    const cards = live
+    const all = live
       .filter((o) => o.status === lane.id && matches(o))
       .sort((a, b) => deliverySortKey(a) - deliverySortKey(b));
-    const value = cards.reduce((s, c) => s + totalOf(c), 0);
-    boardCount += cards.length;
+    const value = all.reduce((s, c) => s + totalOf(c), 0);
+    boardCount += all.length;
     boardValue += value;
-    const unassigned = lane.id === "loading" ? cards.filter((c) => !(c.truck_id && c.driver_id)).length : 0;
-    return { ...lane, cards, value, unassigned };
+    const unassigned = lane.id === "loading" ? all.filter((c) => !(c.truck_id && c.driver_id)).length : 0;
+    /* The lane header still counts the whole stage — what is capped is how much
+       of it gets built into cards. A column is worked from the top, so the
+       oldest delivery window is what wants to be on screen. */
+    const cards = all.slice(0, shown[lane.id] || LANE_PAGE);
+    return { ...lane, cards, total: all.length, value, unassigned };
   });
 
   const assignTarget = ui.assignFor ? orders.find((o) => o.id === ui.assignFor) : null;
@@ -320,6 +332,19 @@ export default function Board() {
                   {lane.cards.length === 0 && (
                     <div style={{ padding: "28px 12px", textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
                       Nothing in this stage. Drag a card here.
+                    </div>
+                  )}
+                  {lane.total > lane.cards.length && (
+                    <div style={{ padding: "4px 10px 10px" }}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        fullWidth
+                        iconLeft="chevron-down"
+                        onClick={() => setShown((s) => ({ ...s, [lane.id]: lane.cards.length + LANE_PAGE }))}
+                      >
+                        Show {Math.min(LANE_PAGE, lane.total - lane.cards.length)} more of {lane.total}
+                      </Button>
                     </div>
                   )}
                 </div>
