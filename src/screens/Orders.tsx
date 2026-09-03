@@ -251,7 +251,7 @@ function Pager({
         style={{ width: 130, flexShrink: 0 }}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <Button variant="ghost" size="sm" iconLeft="chevron-left" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+        <Button variant="ghost" size="sm" iconLeft="arrow-left" disabled={page <= 1} onClick={() => onPage(page - 1)}>
           Previous
         </Button>
         <span className="tabular" style={{ fontSize: 12, color: "var(--text-faint)", minWidth: 88, textAlign: "center" }}>

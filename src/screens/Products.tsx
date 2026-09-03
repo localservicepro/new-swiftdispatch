@@ -255,10 +255,10 @@ export default function Products() {
             {/* The table is still the better tool for a stocktake, so it stays
                 one click away rather than being replaced outright. */}
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              <Button variant={view === "cards" ? "outline" : "ghost"} size="sm" iconLeft="grid-2x2" onClick={() => setView("cards")}>
+              <Button variant={view === "cards" ? "outline" : "ghost"} size="sm" iconLeft="layout-dashboard" onClick={() => setView("cards")}>
                 Cards
               </Button>
-              <Button variant={view === "table" ? "outline" : "ghost"} size="sm" iconLeft="list" onClick={() => setView("table")}>
+              <Button variant={view === "table" ? "outline" : "ghost"} size="sm" iconLeft="list-filter" onClick={() => setView("table")}>
                 Table
               </Button>
             </div>
@@ -642,7 +642,7 @@ export default function Products() {
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
                   <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Photo</span>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <Button variant="outline" size="sm" iconLeft="upload" disabled={uploading} onClick={() => imgRef.current?.click()}>
+                    <Button variant="outline" size="sm" iconLeft="inbox" disabled={uploading} onClick={() => imgRef.current?.click()}>
                       {form.imageUrl ? "Replace photo" : "Upload photo"}
                     </Button>
                     {form.imageUrl && (

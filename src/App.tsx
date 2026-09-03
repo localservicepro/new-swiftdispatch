@@ -15,6 +15,8 @@ import Suburbs from "./screens/Suburbs";
 import Reports from "./screens/Reports";
 import Settings from "./screens/Settings";
 import OrderDrawer from "./screens/OrderDrawer";
+import Docs from "./screens/Docs";
+import AppIcon from "./screens/AppIcon";
 import { UiProvider, useUi } from "./store/ui";
 import { printReceipt, type PrintMode } from "./data/api";
 
@@ -47,6 +49,9 @@ function Shell() {
 
   const nav = ui.nav;
   const [title, subtitle] = SCREEN_META[nav] || SCREEN_META.board;
+  /* Lives here rather than in the ui store: nothing outside the shell opens it,
+     and it should not survive a navigation the way an in-progress order does. */
+  const [docsOpen, setDocsOpen] = React.useState(false);
 
   const navItems = [
     { section: "Operate" },
@@ -161,6 +166,27 @@ function Shell() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
             <div
+              onClick={() => setDocsOpen(true)}
+              title="Handbook — how each part of the app works"
+              style={{
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                height: 32,
+                padding: "0 10px",
+                flexShrink: 0,
+                borderRadius: 6,
+                border: "1px solid var(--border-subtle)",
+                background: "var(--surface-raised)",
+                color: "var(--text-muted)",
+                fontSize: 12,
+              }}
+            >
+              <AppIcon name="book-open" size={14} />
+              Handbook
+            </div>
+            <div
               onClick={() => setTheme(theme === "light" ? "dark" : "light")}
               title={theme === "light" ? "Switch to dark" : "Switch to light"}
               style={{
@@ -250,6 +276,7 @@ function Shell() {
       </div>
 
       <OrderDrawer />
+      {docsOpen && <Docs nav={nav} onClose={() => setDocsOpen(false)} />}
       <PendingNavModal />
       <PrintPromptModal />
 

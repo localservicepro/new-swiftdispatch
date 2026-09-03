@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, Input } from "../design-system/components.js";
+import AppIcon from "./AppIcon";
 
 /* Forty-nine categories as chips filled eight rows and pushed the products off
    the screen — on the one page where the products are the whole point.
@@ -121,7 +122,7 @@ export default function CategoryPicker({
             <span className="tabular" style={{ fontSize: 11, color: "var(--text-faint)" }}>
               {hidden.length}
             </span>
-            <Icon name={open ? "chevron-up" : "chevron-down"} size={12} color="var(--text-faint)" />
+            <AppIcon name={open ? "chevron-up" : "chevron-down"} size={12} color="var(--text-faint)" />
           </>
         )}
 

@@ -128,7 +128,7 @@ export default function Customers() {
         }}>
           Export CSV
         </Button>
-        <Button variant="outline" size="sm" iconLeft="upload" onClick={() => fileRef.current?.click()}>
+        <Button variant="outline" size="sm" iconLeft="inbox" onClick={() => fileRef.current?.click()}>
           Import CSV
         </Button>
         <input
