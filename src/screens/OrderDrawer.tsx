@@ -12,7 +12,7 @@ import {
   STATUS_ACCENT,
   suburbRate,
   qtyText,
-  WINDOW_OPTIONS,
+  unitFor,
   dmy,
   isoFromDmy,
 } from "../lib/domain";
@@ -28,6 +28,8 @@ import {
   removeOrderItem,
   resetSplitToMaster,
   setOrderItemQty,
+  setOrderItemQtyTo,
+  deleteOrder,
 } from "../data/api";
 import {
   AddressBlock,
@@ -45,9 +47,27 @@ import {
 } from "../design-system/components.js";
 import AddressSearch from "./AddressSearch";
 import MyobPushButton from "./MyobPushButton";
+import ProductSearchAdd from "./ProductSearchAdd";
+import { PickerField } from "./DateWindowPicker";
+import Confirm from "./Confirm";
 
 export default function OrderDrawer() {
   const ui = useUi();
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
+
+  /* Escape closes it. In a split-screen window the drawer covers the whole
+     pane, so without this the only way out is to find the x or to click a strip
+     of scrim that may not be there. */
+  const drawerOpen = ui.drawerOpen;
+  React.useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") ui.set({ drawerOpen: false });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawerOpen]);
   const { orders, orderItems, suburbs, customers, trucks, team, paySettings } = useApp();
 
   const open = ui.drawerOpen;
@@ -69,9 +89,7 @@ export default function OrderDrawer() {
   const truckOptions = trucks.map((t) => ({ value: t.id, label: t.rego + " — " + t.type }));
   const driverOptions = team.filter((t) => t.role === "driver").map((t) => ({ value: t.id, label: t.name }));
   const suburbOptions = suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }));
-  const { products, specials } = useApp();
-  const addItemOptions = products.map((p) => ({ value: p.id, label: `${p.name} — $${p.price} / ${p.unit}` }));
-  void specials;
+  const { products } = useApp();
 
   const editTarget = sel || (isMaster ? master : null);
   const items = editTarget ? orderItems[editTarget.id] || [] : [];
@@ -112,7 +130,10 @@ export default function OrderDrawer() {
             {
               label:
                 (o.adjustment_type === "percent" ? `Adjustment — ${Math.abs(Number(o.adjustment_value))}% ` : "Adjustment — ") +
-                (adj < 0 ? "discount" : "surcharge"),
+                /* "Amendment", not "surcharge" — the fuel and card surcharges
+                   are different things and sharing the word sent people looking
+                   for a setting that was not involved. */
+                (adj < 0 ? "discount" : "amendment"),
               value: (adj < 0 ? "−" : "+") + AUD(Math.abs(adj)),
               negative: adj < 0,
             },
@@ -241,7 +262,11 @@ export default function OrderDrawer() {
                   </Button>
                 )}
                 <Button variant="outline" size="sm" iconLeft="file-text" onClick={() => markProcessed(focus.id)}>
-                  Run sheet
+                  {isMaster && splits.length > 1 ? `Run sheets — ${splits.length}` : "Run sheet"}
+                </Button>
+                <div style={{ flex: 1 }} />
+                <Button variant="ghost" size="sm" iconLeft="trash-2" onClick={() => setConfirmDelete(true)}>
+                  Delete
                 </Button>
               </div>
               {/* Keyed so the doc-type choice and the re-send confirmation reset
@@ -309,21 +334,36 @@ export default function OrderDrawer() {
                               value={s.status}
                               onChange={(e: any) => patchSplit(s.id, { status: e.target.value }, "status")}
                             />
-                            <Input
-                              size="sm"
+                            <PickerField
                               label="Date"
+                              icon="calendar"
                               value={dmy(s.delivery_date)}
-                              onChange={(e: any) => {
-                                const iso = isoFromDmy(e.target.value);
-                                if (iso) patchSplit(s.id, { delivery_date: iso }, "schedule");
-                              }}
+                              onClick={() =>
+                                ui.set({
+                                  picker: {
+                                    kind: "date",
+                                    current: dmy(s.delivery_date),
+                                    onPick: (v) => {
+                                      const iso = isoFromDmy(v);
+                                      if (iso) patchSplit(s.id, { delivery_date: iso }, "schedule");
+                                    },
+                                  },
+                                })
+                              }
                             />
-                            <Select
-                              size="sm"
+                            <PickerField
                               label="Window"
-                              options={WINDOW_OPTIONS}
-                              value={s.delivery_window || ""}
-                              onChange={(e: any) => patchSplit(s.id, { delivery_window: e.target.value }, "schedule")}
+                              icon="clock"
+                              value={s.delivery_window || "Not set"}
+                              onClick={() =>
+                                ui.set({
+                                  picker: {
+                                    kind: "window",
+                                    current: s.delivery_window || "",
+                                    onPick: (v) => patchSplit(s.id, { delivery_window: v }, "schedule"),
+                                  },
+                                })
+                              }
                             />
                           </div>
 
@@ -401,9 +441,12 @@ export default function OrderDrawer() {
                                     {p?.name || it.description}
                                   </span>
                                   <QtyBtn label="−" onClick={() => setOrderItemQty(s.id, it.id, -1)} />
-                                  <span className="tabular" style={{ width: 60, textAlign: "center", fontSize: 12, color: "var(--text-primary)" }}>
-                                    {qtyText(Number(it.qty), p?.unit || "each")}
-                                  </span>
+                                  <QtyField
+                                    qty={Number(it.qty)}
+                                    unit={p?.unit || "each"}
+                                    divisible={unitFor(p).divisible}
+                                    onCommit={(n) => setOrderItemQtyTo(s.id, it.id, n)}
+                                  />
                                   <QtyBtn label="+" onClick={() => setOrderItemQty(s.id, it.id, 1)} />
                                   <span className="tabular" style={{ width: 80, textAlign: "right", fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>
                                     {AUD(Number(it.line_total))}
@@ -418,7 +461,7 @@ export default function OrderDrawer() {
                                 </div>
                               );
                             })}
-                            <AddLine orderId={s.id} options={addItemOptions} />
+                            <ProductSearchAdd onAdd={(pid) => addOrderItem(s.id, pid)} placeholder="Add a product to this split" />
                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-faint)" }}>
                               <span>
                                 Goods {AUD(goodsOf(sItems))} · delivery {AUD(feeOf(s, suburbs, paySettings))}
@@ -462,11 +505,23 @@ export default function OrderDrawer() {
                                 {p?.name || it.description}
                               </div>
                               <div className="tabular" style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                                {(p?.sku || "—") + " · " + qtyText(Number(it.qty), p?.unit || "each") + " × " + AUD(Number(it.unit_price))}
+                                {(p?.sku || "—") + " · " + AUD(Number(it.unit_price)) + " per " + (p?.unit || "each")}
                               </div>
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
                               <QtyBtn label="−" onClick={() => setOrderItemQty(editTarget.id, it.id, -1)} size={24} />
+                              {/* Type it. The +/- buttons move by the unit's own
+                                  increment — a quarter of a cubic metre — which
+                                  is fine for a nudge and hopeless for going from
+                                  4 to 11, or for the third of a metre a customer
+                                  actually asked for. */}
+                              <QtyField
+                                qty={Number(it.qty)}
+                                unit={p?.unit || "each"}
+                                divisible={unitFor(p).divisible}
+                                width={62}
+                                onCommit={(n) => setOrderItemQtyTo(editTarget.id, it.id, n)}
+                              />
                               <QtyBtn label="+" onClick={() => setOrderItemQty(editTarget.id, it.id, 1)} size={24} />
                               <div onClick={() => removeOrderItem(editTarget.id, it.id)} title="Remove line" style={{ ...qtyBtnStyle, width: 24, height: 24 }}>
                                 <Icon name="trash-2" size={12} />
@@ -479,7 +534,7 @@ export default function OrderDrawer() {
                         );
                       })}
 
-                      <AddLine orderId={editTarget.id} options={addItemOptions} withLabel />
+                      <ProductSearchAdd onAdd={(pid) => addOrderItem(editTarget.id, pid)} label="Add a product" />
 
                       <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingTop: 8, borderTop: "1px solid var(--border-subtle)" }}>
                         <Row label="Goods" value={AUD(goodsOf(items))} />
@@ -559,22 +614,42 @@ export default function OrderDrawer() {
                         variant="segmented"
                         fullWidth
                       />
+                      {/* The same calendar and the same window list the order
+                          was taken on. This was a pair of text boxes whose value
+                          was rebuilt from the stored date on every keystroke, so
+                          typing a new date undid itself one character in and the
+                          date could not, in practice, be changed at all. */}
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8 }}>
-                        <Input
-                          size="sm"
+                        <PickerField
                           label="Date"
-                          value={dmy(editTarget.delivery_date)}
-                          onChange={(e: any) => {
-                            const iso = isoFromDmy(e.target.value);
-                            if (iso) patchOrder(editTarget.id, { delivery_date: iso });
-                          }}
+                          icon="calendar"
+                          value={dmy(editTarget.delivery_date) || "Not scheduled"}
+                          onClick={() =>
+                            ui.set({
+                              picker: {
+                                kind: "date",
+                                current: dmy(editTarget.delivery_date),
+                                onPick: (v) => {
+                                  const iso = isoFromDmy(v);
+                                  if (iso) patchOrder(editTarget.id, { delivery_date: iso });
+                                },
+                              },
+                            })
+                          }
                         />
-                        <Select
-                          size="sm"
-                          label="Window"
-                          options={WINDOW_OPTIONS}
-                          value={editTarget.delivery_window || ""}
-                          onChange={(e: any) => patchOrder(editTarget.id, { delivery_window: e.target.value })}
+                        <PickerField
+                          label={editTarget.method === "delivery" ? "Delivery window" : "Pickup window"}
+                          icon="clock"
+                          value={editTarget.delivery_window || "Not set"}
+                          onClick={() =>
+                            ui.set({
+                              picker: {
+                                kind: "window",
+                                current: editTarget.delivery_window || "",
+                                onPick: (v) => patchOrder(editTarget.id, { delivery_window: v }),
+                              },
+                            })
+                          }
                         />
                       </div>
                       {editTarget.method === "delivery" && (
@@ -662,6 +737,23 @@ export default function OrderDrawer() {
           </>
         )}
       </div>
+
+      {confirmDelete && focus && (
+        <Confirm
+          title={`Delete ${isMaster ? "MO — " : ""}${focus.order_number}?`}
+          confirmLabel="Delete order"
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            deleteOrder(focus.id);
+            setConfirmDelete(false);
+            ui.set({ drawerOpen: false });
+          }}
+        >
+          It comes off the orders list, off the dispatch board and out of every total.{" "}
+          {isMaster && splits.length > 0 ? `The ${splits.length} deliveries under it go with it. ` : ""}
+          The record itself is kept rather than destroyed, so anything already printed or sent to MYOB still reads.
+        </Confirm>
+      )}
     </>
   );
 }
@@ -699,31 +791,74 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function AddLine({ orderId, options, withLabel }: { orderId: string; options: { value: string; label: string }[]; withLabel?: boolean }) {
-  const [id, setId] = React.useState("");
+/* A quantity you can type. Kept verbatim while the field has focus — you cannot
+   type "0.5" without passing through "" and "0." — and committed on blur or
+   Enter. Leaving it empty, or on zero, takes the line off the order, which is
+   the same thing holding "−" down used to do and is worth being able to say in
+   one go. */
+function QtyField({
+  qty,
+  unit,
+  divisible,
+  width = 56,
+  onCommit,
+}: {
+  qty: number;
+  unit: string;
+  divisible: boolean;
+  width?: number;
+  onCommit: (n: number) => void;
+}) {
+  const shown = () => String(Number(qty.toFixed(3)));
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const value = draft === null ? shown() : draft;
+
+  const commit = () => {
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    setDraft(null);
+    if (draft.trim() === "" || isNaN(n)) return;
+    if (Math.abs(n - qty) < 0.0005) return;
+    onCommit(n);
+  };
+
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 8, flexWrap: "wrap", paddingTop: 4 }}>
-      <div style={{ flex: "1 1 180px", minWidth: 160 }}>
-        <Select
-          size="sm"
-          label={withLabel ? "Add a product" : undefined}
-          options={options}
-          value={id}
-          onChange={(e: any) => setId(e.target.value)}
-          allowUnset
-        />
-      </div>
-      <Button
-        variant="outline"
-        size="sm"
-        iconLeft="plus"
-        onClick={() => {
-          if (id) addOrderItem(orderId, id);
-          setId("");
+    <div
+      title={divisible ? `Type any amount in ${unit}` : `Sold by the ${unit} — whole numbers`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 3,
+        flexShrink: 0,
+        height: 24,
+        padding: "0 5px",
+        borderRadius: 6,
+        border: "1px solid var(--border-default)",
+        background: "var(--surface-input)",
+      }}
+    >
+      <input
+        value={value}
+        inputMode="decimal"
+        onChange={(e) => setDraft(e.target.value.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1"))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") setDraft(null);
         }}
-      >
-        Add line
-      </Button>
+        style={{
+          width,
+          border: "none",
+          outline: "none",
+          background: "transparent",
+          textAlign: "right",
+          fontFamily: "inherit",
+          fontSize: 12,
+          fontVariantNumeric: "tabular-nums",
+          color: "var(--text-primary)",
+        }}
+      />
+      <span style={{ fontSize: 10, color: "var(--text-faint)" }}>{unit}</span>
     </div>
   );
 }

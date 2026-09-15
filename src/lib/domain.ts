@@ -199,6 +199,18 @@ export const feeOf = (
 
 export const goodsOf = (items: OrderItem[]) => items.reduce((t, i) => t + Number(i.line_total), 0);
 
+/* What is actually on the order, in one line: "2 m³ 20mm Crushed Rock · 3 bag
+   Cement". Both list views show it, because knowing an order is $340 tells you
+   nothing about whether it needs the tipper or the crane truck, and opening
+   every order to find out is what the yard was doing instead. */
+export const itemsText = (items: OrderItem[], productById: Map<string, Product>): string =>
+  items
+    .map((i) => {
+      const p = i.product_id ? productById.get(i.product_id) : undefined;
+      return `${qtyText(Number(i.qty), p?.unit || "each")} ${p?.name || i.description || "Item"}`;
+    })
+    .join(" · ");
+
 /* adjustment_value is signed: negative discounts, positive surcharges. */
 export const adjustmentOf = (
   o: Pick<Order, "adjustment_type" | "adjustment_value">,
@@ -254,14 +266,37 @@ export const customerBadgeType = (c: Customer | null | undefined): "account" | "
   return c.tier === "Trade" ? "trade" : "residential";
 };
 
-export const LANES: { id: OrderStatus; title: string; accent: string }[] = [
-  { id: "on_hold", title: "On hold", accent: "var(--status-on-hold)" },
-  { id: "requested", title: "Requested", accent: "var(--status-requested)" },
-  { id: "preparing", title: "Confirmed & preparing", accent: "var(--status-preparing)" },
-  { id: "loading", title: "Loading", accent: "var(--status-loading)" },
-  { id: "en_route", title: "En route", accent: "var(--status-enroute)" },
-  { id: "delivered", title: "Delivered", accent: "var(--status-delivered)" },
+/* Board lanes. A lane is not the same thing as a status: "Confirmed &
+   preparing" holds both, because nobody at the yard writes an order down they
+   are not going to fill — taking it is confirming it — and two columns for one
+   decision meant every order got dragged twice.
+
+   Requested stays a real status all the same. Orders the yard did not raise
+   itself arrive in it from the customer portal, and those genuinely are
+   unconfirmed; they sit in the same lane with a flag on them until someone
+   looks. Dropping a card into the lane confirms it. */
+export const LANES: { id: OrderStatus; title: string; accent: string; statuses: OrderStatus[] }[] = [
+  { id: "on_hold", title: "On hold", accent: "var(--status-on-hold)", statuses: ["on_hold"] },
+  {
+    id: "preparing",
+    title: "Confirmed & preparing",
+    accent: "var(--status-preparing)",
+    statuses: ["requested", "preparing"],
+  },
+  { id: "loading", title: "Loading", accent: "var(--status-loading)", statuses: ["loading"] },
+  { id: "en_route", title: "En route", accent: "var(--status-enroute)", statuses: ["en_route"] },
+  { id: "delivered", title: "Delivered", accent: "var(--status-delivered)", statuses: ["delivered"] },
 ];
+
+/* Who the order is for, in the terms dispatch actually prioritises by: accounts
+   first, then trade, then everyone else. The board colours cards by this. */
+export type CustomerClass = "account" | "trade" | "residential";
+
+export const CLASS_STYLE: Record<CustomerClass, { label: string; colour: string }> = {
+  account: { label: "Account", colour: "var(--brand-primary)" },
+  trade: { label: "Trade", colour: "var(--status-loading)" },
+  residential: { label: "Residential", colour: "var(--text-faint)" },
+};
 
 export const STATUS_ACCENT: Partial<Record<OrderStatus, string>> = {
   requested: "var(--status-requested)",

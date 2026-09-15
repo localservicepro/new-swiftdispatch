@@ -123,6 +123,8 @@ export const blankDraft = (letter = "A"): DeliveryDraft => ({
 });
 
 let toastId = 1;
+const TOAST_MS = 5000;
+const TOAST_MS_PROBLEM = 10000;
 /* The passes while they are running, so a second caller joins the one already
    going rather than starting its own. Reloading the page mid-load, or any two
    things asking at once, was running the whole thing twice over — every table,
@@ -162,7 +164,20 @@ export const useApp = create<AppState>((set, get) => ({
     set({ theme: t });
   },
 
-  toast: (t) => set((s) => ({ toasts: [...s.toasts, { ...t, id: toastId++ }] })),
+  /* Toasts clear themselves. They used to sit in the corner until somebody
+     clicked the x, so a morning's worth of them stacked up over the screen and
+     covered the thing they were reporting on.
+
+     A failure stays twice as long as a confirmation — "created" is read at a
+     glance, "could not save, here is why" is not. Either way the x still
+     works, and anything that genuinely needs a decision is a modal, not a
+     toast. */
+  toast: (t) => {
+    const id = toastId++;
+    set((s) => ({ toasts: [...s.toasts, { ...t, id }] }));
+    const ms = t.tone === "danger" || t.tone === "warning" ? TOAST_MS_PROBLEM : TOAST_MS;
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })), ms);
+  },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })),
 
   login: async (pin) => {

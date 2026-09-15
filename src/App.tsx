@@ -16,9 +16,11 @@ import Reports from "./screens/Reports";
 import Settings from "./screens/Settings";
 import OrderDrawer from "./screens/OrderDrawer";
 import Docs from "./screens/Docs";
+import DateWindowPicker from "./screens/DateWindowPicker";
 import AppIcon from "./screens/AppIcon";
 import { UiProvider, useUi } from "./store/ui";
 import { printReceipt, type PrintMode } from "./data/api";
+import { useViewport } from "./lib/viewport";
 
 const SCREEN_META: Record<string, [string, string]> = {
   board: ["Dispatch board", "Six stages · sorted by delivery time, oldest booking first"],
@@ -49,6 +51,25 @@ function Shell() {
 
   const nav = ui.nav;
   const [title, subtitle] = SCREEN_META[nav] || SCREEN_META.board;
+  const { narrow, tight } = useViewport();
+
+  /* Two copies of the app side by side on one monitor is how several people
+     here work, and 250px of navigation in a 680px window is a third of the
+     screen spent on a menu. It folds to icons on its own below the breakpoint
+     and unfolds again when there is room — and in between, whatever you last
+     chose by hand is what you get, because a preference should not be undone by
+     a window that never changed size. */
+  const manualCollapse = React.useRef<boolean | null>(null);
+  React.useEffect(() => {
+    if (narrow) ui.set({ collapsed: true });
+    else ui.set({ collapsed: manualCollapse.current ?? false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narrow]);
+  const toggleCollapse = () => {
+    const next = !ui.collapsed;
+    if (!narrow) manualCollapse.current = next;
+    ui.set({ collapsed: next });
+  };
   /* Lives here rather than in the ui store: nothing outside the shell opens it,
      and it should not survive a navigation the way an in-progress order does. */
   const [docsOpen, setDocsOpen] = React.useState(false);
@@ -120,8 +141,8 @@ function Shell() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
             <div
-              onClick={() => ui.set({ collapsed: !ui.collapsed })}
-              title="Collapse navigation"
+              onClick={toggleCollapse}
+              title={ui.collapsed ? "Show the navigation labels" : "Collapse navigation"}
               style={{
                 cursor: "pointer",
                 width: 28,
@@ -151,17 +172,19 @@ function Shell() {
               >
                 {title}
               </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "var(--text-faint)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {subtitle}
-              </div>
+              {!narrow && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-faint)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {subtitle}
+                </div>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
@@ -184,7 +207,7 @@ function Shell() {
               }}
             >
               <AppIcon name="book-open" size={14} />
-              Handbook
+              {!narrow && "Handbook"}
             </div>
             <div
               onClick={() => setTheme(theme === "light" ? "dark" : "light")}
@@ -205,28 +228,30 @@ function Shell() {
               }}
             >
               <Icon name={theme === "light" ? "sun" : "moon"} size={14} />
-              {theme === "light" ? "Light" : "Dark"}
+              {!narrow && (theme === "light" ? "Light" : "Dark")}
             </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 11,
-                textTransform: "uppercase",
-                letterSpacing: ".09em",
-                color: "var(--text-faint)",
-                paddingRight: 6,
-              }}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--feedback-success)" }} />
-              Live
-            </div>
-            <Button variant="secondary" size="sm" iconLeft="zap" onClick={() => ui.startYardSale()}>
-              Yard sale
+            {!narrow && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 11,
+                  textTransform: "uppercase",
+                  letterSpacing: ".09em",
+                  color: "var(--text-faint)",
+                  paddingRight: 6,
+                }}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--feedback-success)" }} />
+                Live
+              </div>
+            )}
+            <Button variant="secondary" size="sm" iconLeft="zap" title="Yard sale" onClick={() => ui.startYardSale()}>
+              {tight ? "" : "Yard sale"}
             </Button>
-            <Button variant="primary" size="sm" iconLeft="plus" onClick={() => ui.startOrder()}>
-              New order
+            <Button variant="primary" size="sm" iconLeft="plus" title="New order" onClick={() => ui.startOrder()}>
+              {tight ? "" : "New order"}
             </Button>
             <div
               style={{
@@ -237,7 +262,7 @@ function Shell() {
                 borderLeft: "1px solid var(--border-subtle)",
               }}
             >
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{user?.name}</span>
+              {!narrow && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{user?.name}</span>}
               <div
                 onClick={() => useApp.getState().logout()}
                 title="Sign out"
@@ -259,7 +284,7 @@ function Shell() {
           </div>
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+        <div style={{ flex: 1, overflow: "auto", padding: tight ? 10 : 16 }}>
           {nav === "dashboard" && <Dashboard />}
           {nav === "board" && <Board />}
           {nav === "neworder" && <NewOrder />}
@@ -276,6 +301,9 @@ function Shell() {
       </div>
 
       <OrderDrawer />
+      {/* One date & window picker for the whole app — the new-order screen and
+          the order drawer both open this one. */}
+      <DateWindowPicker />
       {docsOpen && <Docs nav={nav} onClose={() => setDocsOpen(false)} />}
       <PendingNavModal />
       <PrintPromptModal />

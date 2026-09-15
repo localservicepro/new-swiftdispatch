@@ -148,6 +148,13 @@ export interface CustomerSite {
   street: string;
   suburb_id: string | null;
   is_default: boolean;
+  /* When an order last went here. The new-order screen offers the six most
+     recent per customer, newest first. */
+  last_used_at: string | null;
+  created_at?: string;
+  /* Recorded by the app when an order was delivered here, rather than typed in
+     by hand. Only these are trimmed to six; naming one claims it. */
+  auto_captured: boolean;
 }
 
 export interface Customer {
@@ -168,6 +175,10 @@ export interface Customer {
   portal_enabled: boolean;
   portal_pin: string | null;
   myob_uid: string | null;
+  /* Set when a customer with order history is removed from the book. The row
+     stays — statements, invoices and four years of orders read through it —
+     but every picker and the customer list filter it out. */
+  archived_at: string | null;
   contacts: CustomerContact[];
   sites: CustomerSite[];
 }

@@ -392,6 +392,7 @@ export async function applyCustomerImport(plan: ImportPlan): Promise<ImportResul
       portal_enabled: row.values.portal_enabled ?? false,
       portal_pin: row.values.portal_pin ?? null,
       myob_uid: null,
+      archived_at: null,
       contacts: [],
       sites: [],
     };

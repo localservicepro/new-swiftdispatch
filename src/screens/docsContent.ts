@@ -67,15 +67,15 @@ export const GUIDES: Guide[] = [
     screen: "Dispatch board",
     nav: "board",
     part: "Kanban lanes",
-    what: "Requested, preparing, loading, en route, delivered. Drag a card to move the order.",
-    note: "Each lane draws 100 cards then offers Show more. The count in the header is always the real one.",
+    what: "On hold, confirmed & preparing, loading, en route, delivered. Drag a card to move the order.",
+    note: "Taking an order confirms it, so there is no separate Requested column — an order the customer raised through the portal lands in the same lane with a flag on it until someone looks.",
   },
   {
     screen: "Orders",
     nav: "orders",
     part: "The list",
-    what: "Every order, newest delivery first, 100 to a page. Search covers order number, customer, PO and any contact phone.",
-    note: "The date filter beside the search narrows to today, this week or this month.",
+    what: "Every order, newest first, 100 to a page, with the goods and the notes on each one. Search covers order number, customer, delivery address, PO and any contact phone.",
+    note: "Sort by when it was placed or by when it is due. The trash icon at the end of a row deletes an order.",
   },
   {
     screen: "Orders",
@@ -87,14 +87,14 @@ export const GUIDES: Guide[] = [
     screen: "New order",
     nav: "neworder",
     part: "Picking products",
-    what: "Search or tap a category, then tap a card to add it. The step buttons set how much one tap adds.",
-    note: "A product already in the order shows the quantity over its photo.",
+    what: "Search or tap a category, then tap a card to add it. Type the amount straight onto the card, or type it into the search — \"0.5*white brick\" and Enter loads half a tonne of it.",
+    note: "A product already in the order shows the quantity over its photo, and that figure can be typed over.",
   },
   {
     screen: "New order",
     nav: "neworder",
     part: "The cart",
-    what: "Stays on screen while you scroll the catalogue, so you can see what is already in the order without scrolling back.",
+    what: "Stays on screen while you scroll the catalogue, so you can see what is already in the order without scrolling back. In a split-screen window it sits above the catalogue instead.",
   },
   {
     screen: "New order",
@@ -120,6 +120,20 @@ export const GUIDES: Guide[] = [
     part: "Three separate things",
     what: "Who they are (person or business), what they pay (retail or trade pricing), and how they settle (prepaid, or an account with terms and a limit).",
     note: "A sole trader can be a person on trade pricing who prepays.",
+  },
+  {
+    screen: "New order",
+    nav: "neworder",
+    part: "A customer who is not on file",
+    what: "New beside the customer search adds them without leaving the order.",
+    note: "The order starts on nobody — it no longer keeps whoever the last one was for.",
+  },
+  {
+    screen: "Customers",
+    nav: "customers",
+    part: "Delivery addresses",
+    what: "Every address an order has been delivered to is saved here, and the six most recent are offered on a new order. Labels and streets are editable.",
+    note: "Naming an address keeps it. Only unnamed ones the app captured itself are dropped past six.",
   },
   {
     screen: "Customers",
@@ -176,6 +190,19 @@ export const GUIDES: Guide[] = [
     what: "What prints on invoices and statements, payment settings, fuel surcharge, integrations, email and MYOB.",
   },
   {
+    screen: "Reports",
+    nav: "reports",
+    part: "Item movement",
+    what: "What has gone out against what is still booked to go, by product. Filter any report to a single item.",
+    note: "Still to go counts every undelivered order booked for today or later, however far ahead — it is the reorder list.",
+  },
+  {
+    screen: "Every screen",
+    part: "Split screen",
+    what: "The app works in half a monitor. The navigation folds to icons, the top bar drops its labels, and the wide lists shed the columns you can read off the order itself.",
+    note: "The goods and the notes stay, because those are what the list is for.",
+  },
+  {
     screen: "Every screen",
     part: "Import and export",
     what: "Customers, products and suburbs each export to CSV and import back.",
@@ -198,9 +225,13 @@ export const FUNCTION_GROUPS: { group: string; items: Fn[] }[] = [
         where: "Top bar › Yard sale",
         what: "Walk-in sale with no delivery. Optional name on the docket.",
       },
-      { name: "Order adjustment", where: "New order, step 2", what: "Discount or surcharge, as a percent or an amount." },
+      { name: "Order adjustment", where: "New order, step 2", what: "Discount or amendment, as a percent or an amount. Called an amendment, not a surcharge — the fuel and card surcharges are different things." },
+      { name: "Typed quantities", where: "New order · Orders › Items", what: "Type the amount on a product card, in the cart, or as \"0.5*sand\" in the search. A third of a metre is a real order and is taken as typed." },
+      { name: "Create a customer mid-order", where: "New order › New", what: "Adds a customer without leaving the order, and puts them straight on it." },
+      { name: "Order over stop credit", where: "New order, customer card", what: "Takes the order anyway and writes the override into the order notes, so it reads as a decision." },
       { name: "Dispatch board", where: "Dispatch board", what: "Drag orders between stages; assign truck and driver." },
       { name: "Delivery photos (POD)", where: "Driver portal", what: "Driver marks delivered and attaches a photo." },
+      { name: "Delete an order", where: "Orders list · order panel", what: "Hides it everywhere and keeps the record, so anything printed or sent to MYOB still reads. A master takes its deliveries with it." },
     ],
   },
   {
@@ -215,6 +246,11 @@ export const FUNCTION_GROUPS: { group: string; items: Fn[] }[] = [
         name: "Split invoices",
         where: "Orders › Print receipt",
         what: "One sheet per delivery, or all deliveries combined on one.",
+      },
+      {
+        name: "Run sheet",
+        where: "Orders › Run sheet",
+        what: "The paper that goes on the truck: goods with a box to tick, the address in large type, the phones, and the delivery notes. No prices. One sheet per drop.",
       },
       {
         name: "Account statement",
@@ -278,6 +314,9 @@ export const FUNCTION_GROUPS: { group: string; items: Fn[] }[] = [
         what: "Round-trips delivery zones and rates. Can clear out suburbs the file does not mention.",
       },
       { name: "Import preview", where: "All three importers", what: "Shows every row and what will happen before anything is written." },
+      { name: "Saved delivery addresses", where: "Customers › Delivery addresses", what: "The last six addresses per customer, captured as orders go out and editable by hand." },
+      { name: "Item movement report", where: "Reports", what: "Gone out against still to go, per product — what to order in from the quarry." },
+      { name: "Delete a customer", where: "Customers › Delete", what: "Deleted outright if they have never ordered; archived out of the book if they have, so their invoices still read." },
     ],
   },
   {
@@ -291,6 +330,7 @@ export const FUNCTION_GROUPS: { group: string; items: Fn[] }[] = [
       { name: "Driver portal", where: "#/driver", what: "Drivers see their runs, update status and attach delivery photos." },
       { name: "Team and PINs", where: "Team", what: "Super admin, admin and driver roles, each with a sign-in PIN." },
       { name: "Trucks", where: "Fleet", what: "Rego, type and status." },
+      { name: "Assign a crew", where: "Dispatch board › Loading", what: "Truck and driver together. Admins who also drive are on the list, not only the drivers." },
     ],
   },
   {
@@ -323,6 +363,21 @@ export const RULES: Rule[] = [
     why: "The old data mixed them, which is why some orders arrived with 'trade' as a payment type. Trade is a price list.",
   },
   {
+    title: "Taking an order confirms it",
+    what: "An order written up here starts at confirmed & preparing. Requested belongs to orders the yard did not raise — the customer portal puts them there, flagged, in the same lane.",
+    why: "Two columns for one decision meant every order got dragged twice.",
+  },
+  {
+    title: "A quantity is taken as typed",
+    what: "The +/- buttons move by the unit's own step. A number you type is kept as it is — 0.33 of a metre stays 0.33.",
+    why: "The step is how the buttons move, not a rule about what can be sold. Snapping a typed amount to the nearest quarter was the app arguing with the customer.",
+  },
+  {
+    title: "Stop credit warns rather than bars",
+    what: "An account over its limit shows the reason and will still take the order once someone ticks the box. The override is written into the order notes.",
+    why: "The yard does carry good customers through a slow month. That is a decision somebody makes, so it is recorded as one.",
+  },
+  {
     title: "Nothing is written until you confirm",
     what: "Every importer shows the full plan first — what will be created, changed, skipped, and why.",
     why: "An import that surprises you has already done the damage.",
@@ -351,6 +406,16 @@ export const RULES: Rule[] = [
     title: "Deleted orders are hidden, not destroyed",
     what: "Deleting sets a date; the row stays.",
     why: "History that other records point at stays readable.",
+  },
+  {
+    title: "A customer with orders is archived, not deleted",
+    what: "Never ordered, and they are gone for good. Ever ordered, and the record is kept and hidden — out of the book and every picker, still readable on their old orders.",
+    why: "Statements, tax invoices and four years of history all read the name through that row.",
+  },
+  {
+    title: "Each order starts on nobody",
+    what: "The new-order screen no longer keeps the customer from the last order.",
+    why: "The same customer rarely orders twice in a row, and the name sits in a corner nobody rereads — which is how goods end up on the wrong account.",
   },
 ];
 

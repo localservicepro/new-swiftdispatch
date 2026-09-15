@@ -7,6 +7,7 @@ import { derivePaymentType, feeOf, orderTotal, unitFor, roundToStep, unitPrice }
 import { pushBlockers, readyForMyob } from "../lib/myob";
 import { pushContextFor, pushOrdersToMyob } from "./myob";
 import { invoiceDocument, invoiceSheet, invoiceTitle } from "../print/invoice";
+import { runSheetHtml, type RunSheetGroup } from "../print/runsheet";
 import { statementHtml, type StatementAgeing, type StatementLine } from "../print/statement";
 import { printDocument } from "../print/print";
 import type {
@@ -150,6 +151,33 @@ export function setOrderItemQty(orderId: string, itemId: string, delta: number) 
   markItemsOverridden(orderId);
 }
 
+/* Typing a quantity, as against nudging it by a step. Editing an order used to
+   offer only the +/- buttons, which move in the unit's own increment — a quarter
+   of a cubic metre — so putting a third of a metre on a line, or changing 4 to
+   11, meant a lot of clicking. The step buttons stay; this is what the field
+   itself commits.
+
+   The unit's minimum still applies, and zero still removes the line, because
+   those are properties of how the yard sells the thing rather than of the
+   widget. What is gone is the requirement to land on a step boundary. */
+export function setOrderItemQtyTo(orderId: string, itemId: string, qty: number) {
+  const s = S();
+  const items = s.orderItems[orderId] || [];
+  const item = items.find((i) => i.id === itemId);
+  if (!item) return;
+  const p = s.products.find((x) => x.id === item.product_id);
+  const u = unitFor(p);
+  /* A product sold whole is still sold whole — 2.5 pallets is not an order. */
+  const wanted = u.divisible ? Math.round(qty * 1000) / 1000 : Math.round(qty);
+  if (!(wanted > 0)) return removeOrderItem(orderId, itemId);
+  const next = items.map((i) =>
+    i.id === itemId ? { ...i, qty: wanted, line_total: Math.round(wanted * Number(i.unit_price) * 100) / 100 } : i
+  );
+  set((st) => ({ orderItems: { ...st.orderItems, [orderId]: next } }));
+  persist(supabase.from("order_items").update({ qty: wanted }).eq("id", itemId), "the line");
+  markItemsOverridden(orderId);
+}
+
 export function removeOrderItem(orderId: string, itemId: string) {
   set((st) => ({
     orderItems: { ...st.orderItems, [orderId]: (st.orderItems[orderId] || []).filter((i) => i.id !== itemId) },
@@ -218,6 +246,13 @@ export interface CreateOrderInput {
   fuelSurcharge: number;
 }
 
+/* An order taken at the counter or over the phone is confirmed by the act of
+   taking it — nobody writes one down they are not going to fill. Requested is
+   still a real state, but it belongs to orders the yard did not raise itself:
+   the customer portal puts them there, and they sit in the same lane on the
+   board with a flag on them until someone looks. */
+const OPENING_STATUS: OrderStatus = "preparing";
+
 export async function createOrder(input: CreateOrderInput): Promise<Order | null> {
   const s = S();
   const isSplit = input.mode === "standard" && input.drafts.length > 1;
@@ -263,7 +298,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
       id: masterId,
       order_number: baseNumber,
       kind: "master",
-      status: "requested",
+      status: OPENING_STATUS,
       street: a.street,
       suburb_id: a.suburbId,
       delivery_fee: a.fee,
@@ -285,7 +320,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
         order_number: baseNumber + "-" + d.letter,
         kind: "split",
         parent_order_id: masterId,
-        status: "requested",
+        status: OPENING_STATUS,
         street: d.street,
         suburb_id: d.suburbId,
         delivery_fee: d.fee,
@@ -307,7 +342,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
       id,
       order_number: baseNumber,
       kind: input.mode === "yardsale" ? "yard_sale" : "standard",
-      status: input.mode === "yardsale" ? "ready_for_pickup" : "requested",
+      status: input.mode === "yardsale" ? "ready_for_pickup" : OPENING_STATUS,
       street: input.method === "delivery" ? d.street : "Yard collection",
       suburb_id: input.method === "delivery" ? d.suburbId : null,
       delivery_fee: input.method === "delivery" ? d.fee : 0,
@@ -346,15 +381,82 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
     orderItems: { ...st.orderItems, ...byOrder },
   }));
   logActivity("order", newOrders[0]?.id || null, "created:" + baseNumber);
+  /* Remember where this went, so next time it is a tap rather than a retype. */
+  if (input.customer && input.method === "delivery") {
+    for (const d of input.drafts) rememberDeliveryAddress(input.customer.id, d.street, d.suburbId);
+  }
   /* A yard sale is finished the moment it is rung up — it never passes through
      a status change, so auto-push has to be offered its one chance here. */
   if (input.mode === "yardsale") newOrders.forEach((o) => void autoPushToMyob(o.id));
   return newOrders.find((o) => o.kind !== "split") || newOrders[0] || null;
 }
 
+/* Deleting an order sets a date; the row stays (house rule — history that other
+   records point at has to stay readable, and a statement drawn last month must
+   still add up next month).
+
+   A master goes with its splits: the master is only the thing that groups them,
+   so deleting it and leaving the deliveries behind would put orphans on the
+   board. */
+export function deleteOrder(id: string) {
+  const s = S();
+  const order = s.orders.find((o) => o.id === id);
+  if (!order) return;
+  const ids = order.kind === "master" ? [id, ...s.orders.filter((o) => o.parent_order_id === id).map((o) => o.id)] : [id];
+  const deleted_at = new Date().toISOString();
+  set((st) => ({ orders: st.orders.map((o) => (ids.includes(o.id) ? { ...o, deleted_at } : o)) }));
+  persist(supabase.from("orders").update({ deleted_at }).in("id", ids), "the order");
+  logActivity("order", id, "deleted:" + order.order_number);
+  S().toast({
+    tone: "success",
+    title: order.order_number + " deleted",
+    description: ids.length > 1 ? `${ids.length - 1} deliveries under it went with it.` : undefined,
+  });
+}
+
+export function restoreOrder(id: string) {
+  const s = S();
+  const order = s.orders.find((o) => o.id === id);
+  if (!order) return;
+  const ids = order.kind === "master" ? [id, ...s.orders.filter((o) => o.parent_order_id === id).map((o) => o.id)] : [id];
+  set((st) => ({ orders: st.orders.map((o) => (ids.includes(o.id) ? { ...o, deleted_at: null } : o)) }));
+  persist(supabase.from("orders").update({ deleted_at: null }).in("id", ids), "the order");
+  logActivity("order", id, "restored:" + order.order_number);
+}
+
+/* Run sheet: the paper that goes on the truck. This used to stamp the order as
+   processed and print nothing at all, so the button appeared to do nothing and
+   the yard went on writing loads out by hand.
+
+   A split order prints one sheet per delivery — each drop is its own run, its
+   own address and its own signature — which is the same rule the tax invoice
+   follows. */
 export function markProcessed(id: string) {
+  const s = S();
+  const order = s.orders.find((o) => o.id === id);
+  if (!order) return;
+
+  const drops = order.kind === "master" ? splitsOf(id) : [order];
+  const groups: RunSheetGroup[] = (drops.length ? drops : [order]).map((o) => ({
+    order: o,
+    items: s.orderItems[o.id] || [],
+  }));
+
+  printDocument(
+    runSheetHtml({
+      groups,
+      products: s.products,
+      suburbs: s.suburbs,
+      trucks: s.trucks,
+      team: s.team,
+      customer: s.customers.find((c) => c.id === order.customer_id),
+      business: s.business,
+    })
+  );
+
   const now = new Date().toISOString();
-  patchOrder(id, { processed_at: now, processed_by: S().user?.id || null } as Partial<Order>);
+  patchOrder(id, { processed_at: now, processed_by: s.user?.id || null } as Partial<Order>);
+  logActivity("order", id, "runsheet:" + order.order_number);
 }
 
 /* Print receipt: open the browser's print dialogue on the tax invoice, the same
@@ -570,12 +672,150 @@ export function removeContact(customerId: string, contactId: string) {
   persist(supabase.from("customer_contacts").delete().eq("id", contactId), "the contact");
 }
 
-export function addSite(customerId: string, site: Omit<CustomerSite, "id" | "customer_id">) {
-  const row: CustomerSite = { id: uuid(), customer_id: customerId, ...site };
+export function addSite(
+  customerId: string,
+  site: Omit<CustomerSite, "id" | "customer_id" | "last_used_at" | "auto_captured"> & Partial<Pick<CustomerSite, "auto_captured">>
+) {
+  const row: CustomerSite = {
+    id: uuid(),
+    customer_id: customerId,
+    last_used_at: null,
+    auto_captured: false,
+    ...site,
+  };
   set((s) => ({
     customers: s.customers.map((x) => (x.id === customerId ? { ...x, sites: [...x.sites, row] } : x)),
   }));
   persist(supabase.from("customer_sites").insert(row), "the site");
+  return row;
+}
+
+/* Editing a saved address. Naming one also claims it: an address the app picked
+   up on its own is fair game for the trim to six, but the moment someone writes
+   "back paddock, second gate" on it they have made it worth keeping, and it
+   stops being trimmable. */
+export function patchSite(customerId: string, siteId: string, patch: Partial<CustomerSite>) {
+  const s = S();
+  const site = s.customers.find((c) => c.id === customerId)?.sites.find((x) => x.id === siteId);
+  if (!site) return;
+  const claimed = patch.label !== undefined && patch.label !== site.label && site.auto_captured;
+  const next = claimed ? { ...patch, auto_captured: false } : patch;
+  set((st) => ({
+    customers: st.customers.map((c) =>
+      c.id === customerId ? { ...c, sites: c.sites.map((x) => (x.id === siteId ? { ...x, ...next } : x)) } : c
+    ),
+  }));
+  persist(supabase.from("customer_sites").update(next).eq("id", siteId), "the address");
+}
+
+export function removeSite(customerId: string, siteId: string) {
+  set((st) => ({
+    customers: st.customers.map((c) =>
+      c.id === customerId ? { ...c, sites: c.sites.filter((x) => x.id !== siteId) } : c
+    ),
+  }));
+  persist(supabase.from("customer_sites").delete().eq("id", siteId), "the address");
+}
+
+/* The six most recent addresses for a customer, newest first, with any the yard
+   named itself kept in front of the ones the app picked up on its own. This is
+   what the new-order screen offers. */
+export const recentSites = (c: Customer | null | undefined, limit = 6): CustomerSite[] => {
+  if (!c) return [];
+  const rank = (x: CustomerSite) => (x.is_default ? 2 : x.auto_captured ? 0 : 1);
+  const when = (x: CustomerSite) => (x.last_used_at ? Date.parse(x.last_used_at) : 0);
+  return [...c.sites].sort((a, b) => rank(b) - rank(a) || when(b) - when(a)).slice(0, limit);
+};
+
+/* Called when an order is created, for every delivery on it. An address the
+   yard has actually delivered to is worth more than one somebody typed into a
+   form once, and remembering them is what stops a driver going to the wrong
+   gate — so each delivery either refreshes the matching saved address or adds
+   itself as a new one.
+
+   Only automatically captured addresses are trimmed, and only past six. */
+const SAVED_ADDRESSES = 6;
+
+export function rememberDeliveryAddress(customerId: string, street: string, suburbId: string | null) {
+  const s = S();
+  const cust = s.customers.find((c) => c.id === customerId);
+  const clean = (street || "").trim();
+  if (!cust || !clean || !suburbId) return;
+
+  const same = (x: CustomerSite) =>
+    x.suburb_id === suburbId && x.street.trim().toLowerCase() === clean.toLowerCase();
+  const now = new Date().toISOString();
+  const hit = cust.sites.find(same);
+
+  if (hit) {
+    patchSite(customerId, hit.id, { last_used_at: now });
+    return;
+  }
+
+  const suburbName = s.suburbs.find((x) => x.id === suburbId)?.name || "";
+  addSite(customerId, {
+    label: suburbName || "Delivered to",
+    street: clean,
+    suburb_id: suburbId,
+    is_default: cust.sites.length === 0,
+    auto_captured: true,
+  });
+  /* addSite has already written; re-read so the trim sees the new row. */
+  const after = S().customers.find((c) => c.id === customerId);
+  const autos = (after?.sites || [])
+    .filter((x) => x.auto_captured && !x.is_default)
+    .sort((a, b) => Date.parse(b.last_used_at || b.created_at || "") - Date.parse(a.last_used_at || a.created_at || ""));
+  for (const stale of autos.slice(SAVED_ADDRESSES)) removeSite(customerId, stale.id);
+}
+
+/* Removing a customer. One who has never ordered is simply gone — contacts and
+   addresses cascade, and there is nothing else pointing at the row. One with
+   orders cannot be: statements, tax invoices and years of history all read the
+   name through it. Those are archived instead — out of the book and out of
+   every picker, still readable wherever an old order is displayed.
+
+   The caller is told which of the two happened, because they are not the same
+   thing and the difference matters later. */
+export function customerOrderCount(id: string): number {
+  return S().orders.filter((o) => o.customer_id === id && !o.deleted_at).length;
+}
+
+export async function deleteCustomer(id: string): Promise<"deleted" | "archived" | null> {
+  const s = S();
+  const cust = s.customers.find((c) => c.id === id);
+  if (!cust) return null;
+
+  if (customerOrderCount(id) === 0) {
+    const { error } = await supabase.from("customers").delete().eq("id", id);
+    if (error) {
+      s.toast({ tone: "danger", title: "Could not delete " + cust.name, description: error.message });
+      return null;
+    }
+    set((st) => ({ customers: st.customers.filter((c) => c.id !== id) }));
+    logActivity("customer", id, "deleted:" + cust.name);
+    s.toast({ tone: "success", title: cust.name + " deleted" });
+    return "deleted";
+  }
+
+  const archived_at = new Date().toISOString();
+  const { error } = await supabase.from("customers").update({ archived_at }).eq("id", id);
+  if (error) {
+    s.toast({ tone: "danger", title: "Could not archive " + cust.name, description: error.message });
+    return null;
+  }
+  set((st) => ({ customers: st.customers.map((c) => (c.id === id ? { ...c, archived_at } : c)) }));
+  logActivity("customer", id, "archived:" + cust.name);
+  s.toast({
+    tone: "success",
+    title: cust.name + " archived",
+    description: "Their orders keep the name so statements and invoices still read.",
+  });
+  return "archived";
+}
+
+export function restoreCustomer(id: string) {
+  set((st) => ({ customers: st.customers.map((c) => (c.id === id ? { ...c, archived_at: null } : c)) }));
+  persist(supabase.from("customers").update({ archived_at: null }).eq("id", id), "the customer");
 }
 
 export function genPin(): string {
@@ -650,11 +890,13 @@ export async function createCustomer(input: NewCustomerInput): Promise<Customer 
       street: input.street,
       suburb_id: input.suburbId,
       is_default: true,
+      last_used_at: null,
+      auto_captured: false,
     };
     sites.push(site);
     persist(supabase.from("customer_sites").insert(site), "the site");
   }
-  const cust: Customer = { ...(data as Customer), contacts: [contact], sites };
+  const cust: Customer = { ...(data as Customer), archived_at: null, contacts: [contact], sites };
   set((st) => ({ customers: [...st.customers, cust] }));
   return cust;
 }

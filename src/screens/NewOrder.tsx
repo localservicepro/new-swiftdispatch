@@ -11,7 +11,6 @@ import {
   dmy,
   isoFromDmy,
   qtyText,
-  roundToStep,
   suburbRate,
   unitFor,
   unitOf,
@@ -21,7 +20,7 @@ import {
 } from "../lib/domain";
 import { PAYMENT_METHODS } from "../lib/types";
 import type { OrderItem } from "../lib/types";
-import { addContact, createOrder } from "../data/api";
+import { addContact, createOrder, recentSites } from "../data/api";
 import {
   Alert,
   Badge,
@@ -39,6 +38,10 @@ import {
 import AddressSearch from "./AddressSearch";
 import ProductCard from "./ProductCard";
 import CategoryPicker from "./CategoryPicker";
+import { PickerField } from "./DateWindowPicker";
+import CustomerPicker from "./CustomerPicker";
+import { useViewport } from "../lib/viewport";
+import NewCustomerModal from "./NewCustomerModal";
 
 /* Product cards drawn before "Show more". */
 const PRODUCT_PAGE = 36;
@@ -50,6 +53,7 @@ export default function NewOrder() {
   const app = useApp();
   const { products, categories, specials, customers, suburbs, trucks, paySettings, business, orderItems } = app;
 
+  const { tight } = useViewport();
   const yard = ui.orderMode === "yardsale";
   const drafts = ui.drafts;
   const cart = ui.cart;
@@ -61,10 +65,13 @@ export default function NewOrder() {
   /* Nine hundred cards with photographs is not something to mount while someone
      is trying to take an order. */
   const [shownProducts, setShownProducts] = useState(PRODUCT_PAGE);
-  const [custQuery, setCustQuery] = useState("");
   const [contactAddOpen, setContactAddOpen] = useState(false);
   const [newContact, setNewContact] = useState({ name: "", phone: "" });
+  const [newCustOpen, setNewCustOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  /* Stop credit no longer blocks the order outright, but it is not waved
+     through either: somebody has to say, on this order, that they know. */
+  const [creditOverride, setCreditOverride] = useState(false);
 
   const priceOf = (pid: string) => unitPrice(products.find((p) => p.id === pid), specials, () => null);
   const product = (pid: string) => products.find((p) => p.id === pid);
@@ -101,9 +108,13 @@ export default function NewOrder() {
   const adjustSigned = ui.adjustDirection === "surcharge" ? adjustNum : -adjustNum;
   const adjust = ui.adjustType === "Percent" ? Math.round(goods * adjustSigned) / 100 : adjustSigned;
   const isSurcharge = ui.adjustDirection === "surcharge";
+  /* "Amendment", not "surcharge": the yard already has two surcharges that mean
+     something else — the fuel one on deliveries and the card one on payments —
+     and calling a one-off addition by the same word had people looking for a
+     setting that was not involved. */
   const adjustLabel =
     (ui.adjustType === "Percent" ? `Adjustment — ${adjustNum}% ` : "Adjustment — ") +
-    (isSurcharge ? "surcharge" : "discount");
+    (isSurcharge ? "amendment" : "discount");
   const total = goods + feeTotal + fuelTotal + adjust;
 
   const setCart = (next: CartLine[]) => ui.set({ cart: next });
@@ -111,17 +122,43 @@ export default function NewOrder() {
   const patchDraft = (letter: string, patch: Partial<DeliveryDraft>) =>
     setDrafts(drafts.map((d) => (d.letter === letter ? { ...d, ...patch } : d)));
 
-  const addProduct = (pid: string, step?: number) => {
+  /* How much one tap loads. An amount typed into the search box wins; otherwise
+     it is the smallest the thing is sold in — a cubic metre for bulk, one for
+     anything bagged. The old fixed "step" setting is gone: it was a mode you
+     had to remember to change and then remember to change back, and forgetting
+     put a tonne of sand on an order meant for a quarter of one. */
+  const addProduct = (pid: string, amount?: number) => {
     const p = product(pid);
     if (!p) return;
     const u = unitFor(p);
-    const nominal = step || ui.qtyStep || u.step;
-    const n = u.divisible ? Math.max(u.min, roundToStep(nominal, u)) : Math.max(1, Math.ceil(nominal));
+    const nominal = amount ?? parsed.qty ?? u.min;
+    const n = u.divisible ? Math.max(u.min, Math.round(nominal * 1000) / 1000) : Math.max(1, Math.round(nominal));
     const to = activeDraft;
     const found = cart.find((l) => l.productId === pid && l.to === to);
     setCart(
       found
-        ? cart.map((l) => (l.productId === pid && l.to === to ? { ...l, qty: roundToStep(l.qty + n, u), typed: null } : l))
+        ? cart.map((l) =>
+            l.productId === pid && l.to === to
+              ? { ...l, qty: Math.round((l.qty + n) * 1000) / 1000, typed: null }
+              : l
+          )
+        : [...cart, { productId: pid, qty: n, to, typed: null }]
+    );
+  };
+
+  /* Setting a line to an exact amount, as against adding to it. This is what
+     the field on a card commits. */
+  const setProductQty = (pid: string, qty: number) => {
+    const p = product(pid);
+    if (!p) return;
+    const u = unitFor(p);
+    const n = u.divisible ? Math.round(qty * 1000) / 1000 : Math.round(qty);
+    const to = activeDraft;
+    if (!(n > 0)) return setCart(cart.filter((l) => !(l.productId === pid && l.to === to)));
+    const found = cart.find((l) => l.productId === pid && l.to === to);
+    setCart(
+      found
+        ? cart.map((l) => (l.productId === pid && l.to === to ? { ...l, qty: n, typed: null } : l))
         : [...cart, { productId: pid, qty: n, to, typed: null }]
     );
   };
@@ -132,7 +169,10 @@ export default function NewOrder() {
         .map((l, i) => {
           if (i !== index) return l;
           const u = unitFor(product(l.productId));
-          return { ...l, qty: Math.max(0, roundToStep(l.qty + dir * u.step, u)), typed: null };
+          /* The button moves by the step; it does not snap to it. A line typed
+             as 0.33 goes to 0.58, not to 0.5 — nudging an amount should not
+             quietly correct it to one the app prefers. */
+          return { ...l, qty: Math.max(0, Math.round((l.qty + dir * u.step) * 1000) / 1000), typed: null };
         })
         .filter((l) => l.qty > 0)
     );
@@ -160,30 +200,24 @@ export default function NewOrder() {
           const raw = l.typed === null || l.typed === undefined ? String(l.qty) : l.typed;
           const n = parseFloat(raw);
           if (raw.trim() === "" || isNaN(n) || n <= 0) return { ...l, qty: 0, typed: null };
-          return { ...l, qty: Math.max(u.min, roundToStep(n, u)), typed: null };
+          /* Taken as typed. A third of a metre is a real order and snapping it
+             to the nearest quarter was the app arguing with the customer; the
+             step is what the buttons move by, not a rule about what can be
+             sold. Anything sold whole is still sold whole. */
+          return u.divisible
+            ? { ...l, qty: Math.max(u.min, Math.round(n * 1000) / 1000), typed: null }
+            : { ...l, qty: Math.max(1, Math.round(n)), typed: null };
         })
         .filter((l) => l.qty > 0)
     );
   };
 
-  /* Customer chips: three most recent, plus current pick; searching widens. */
-  const cq = custQuery.trim().toLowerCase();
-  const custMatches = cq
-    ? customers.filter((c) =>
-        (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
-          .toLowerCase()
-          .includes(cq)
-      )
-    : customers;
-  const shownCustomers = cq
-    ? custMatches.slice(0, 8)
-    : customers.slice(0, 3).concat(customer && !customers.slice(0, 3).some((c) => c.id === customer.id) ? [customer] : []);
-  const hiddenCount = cq ? Math.max(0, custMatches.length - 8) : Math.max(0, customers.length - shownCustomers.length);
-
   /* When a phone/name search lands on a business with a known contact, that
      contact auto-selects (§6). */
-  const pickCustomer = (cId: string) => {
-    const c = customers.find((x) => x.id === cId);
+  const pickCustomer = (cId: string, known?: typeof customers[number]) => {
+    /* `known` is for a customer created a moment ago from the modal on this
+       screen: the store has it, this render's closure does not yet. */
+    const c = known || customers.find((x) => x.id === cId);
     if (!c) return;
     const site = c.sites.find((x) => x.is_default) || c.sites[0];
     const r = site ? suburbRate(site.suburb_id, suburbs) : null;
@@ -191,6 +225,11 @@ export default function NewOrder() {
     ui.set({
       customerId: c.id,
       orderContact: ordersContact?.id || null,
+      /* An account customer settles on account — there is no other way they
+         ever settle, and leaving the field blank meant someone had to pick the
+         only possible answer on every order. Anything already chosen by hand is
+         left alone. */
+      settleMethod: c.billing === "account" ? "on_account" : ui.settleMethod,
       drafts: drafts.map((d, i) =>
         i === 0
           ? { ...d, street: site?.street || "", suburbId: site?.suburb_id || null, fee: r?.fee || 0, feeSource: "suburb" }
@@ -198,6 +237,7 @@ export default function NewOrder() {
       ),
     });
     setContactAddOpen(false);
+    setCreditOverride(false);
   };
 
   /* Categories ranked by how often the yard actually orders out of them, from
@@ -230,7 +270,22 @@ export default function NewOrder() {
       return { name: c.name, weight: e.weight || e.products / 1000, products: e.products };
     });
   }, [categories, products, orderItems]);
-  const pq = prodQuery.trim().toLowerCase();
+  /* "0.5*White Brick Sand" — the shorthand the old yard-sale screen had, and the
+     reason the change sheet asks for the Step buttons to go. Type the amount,
+     a star (or an x), then enough of the name to find it, and Enter loads that
+     much of it. Everything after the separator is the search, so the grid
+     narrows as you type either way.
+
+     Without a separator the whole thing is just a search, because plenty of
+     products begin with a number — 20mm Crushed Rock among them. */
+  const parsed = useMemo(() => {
+    const m = prodQuery.match(/^\s*(\d+(?:\.\d+)?)\s*[*x×X]\s*(.*)$/);
+    if (!m) return { qty: null as number | null, text: prodQuery };
+    const n = parseFloat(m[1]);
+    return { qty: isNaN(n) || n <= 0 ? null : n, text: m[2] };
+  }, [prodQuery]);
+
+  const pq = parsed.text.trim().toLowerCase();
   const visibleProducts = products.filter((p) => {
     if (catFilter !== "All" && catName(p.category_id) !== catFilter) return false;
     return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
@@ -279,8 +334,8 @@ export default function NewOrder() {
     });
   summaryLines.push({ label: "Includes GST", value: AUD(total / 11) });
 
-  const createDisabled =
-    creating || lines.length === 0 || emptyDrafts.length > 0 || quickBlock.blocked || badSuburbs.length > 0;
+  const creditHeld = quickBlock.blocked && !creditOverride;
+  const createDisabled = creating || lines.length === 0 || emptyDrafts.length > 0 || creditHeld || badSuburbs.length > 0;
 
   const doCreate = async () => {
     if (createDisabled) return;
@@ -295,7 +350,14 @@ export default function NewOrder() {
       cart,
       settleMethod: ui.settleMethod,
       poNumber: ui.poNumber,
-      orderNotes: ui.orderNotesDraft,
+      orderNotes: [
+        ui.orderNotesDraft,
+        quickBlock.blocked && creditOverride
+          ? `Placed over stop credit by ${app.user?.name || "an admin"} on ${new Date().toLocaleDateString("en-AU")}.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
       deliveryNotes: ui.deliveryNotesDraft,
       adjustmentType: adjustNum > 0 ? (ui.adjustType === "Percent" ? "percent" : "amount") : null,
       adjustmentValue: adjustNum > 0 ? adjustSigned : null,
@@ -317,7 +379,14 @@ export default function NewOrder() {
         settleMethod: null,
         yardCustomer: false,
         yardWalkInName: "",
+        /* The next order is for the next customer. Carrying the last one over
+           saved a search and cost the yard orders billed to the wrong account,
+           because the name sits up in the corner where nobody rereads it. */
+        customerId: null,
+        orderContact: null,
       });
+      setCreditOverride(false);
+      setAdjustValue("");
     }
   };
 
@@ -346,7 +415,7 @@ export default function NewOrder() {
       <Tabs
         items={[
           { id: "discount", label: "Discount" },
-          { id: "surcharge", label: "Surcharge" },
+          { id: "surcharge", label: "Amendment" },
         ]}
         activeId={ui.adjustDirection}
         onSelect={(id: string) => ui.set({ adjustDirection: id as "discount" | "surcharge" })}
@@ -407,49 +476,11 @@ export default function NewOrder() {
         )}
         {(!yard || ui.yardCustomer) && (
           <>
-            <Input
-              size="sm"
-              icon="search"
-              value={custQuery}
-              onChange={(e: any) => setCustQuery(e.target.value)}
-              placeholder="Search a business or person"
+            <CustomerPicker
+              value={effectiveCustomer?.id || null}
+              onPick={pickCustomer}
+              onAddNew={() => setNewCustOpen(true)}
             />
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {shownCustomers.map((c) => {
-                const on = effectiveCustomer?.id === c.id;
-                return (
-                  <div
-                    key={c.id}
-                    onClick={() => pickCustomer(c.id)}
-                    title={`${c.entity} · ${c.contacts.length === 1 ? "1 contact" : c.contacts.length + " contacts"}`}
-                    style={{
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      fontSize: 11,
-                      padding: "3px 9px",
-                      borderRadius: 9999,
-                      whiteSpace: "nowrap",
-                      border: `1px solid ${on ? "var(--border-accent)" : "var(--border-subtle)"}`,
-                      background: on ? "var(--om-chip-active-bg)" : "transparent",
-                      color: on ? "var(--text-primary)" : "var(--text-muted)",
-                    }}
-                  >
-                    <Icon name={c.entity === "Company" ? "building-2" : c.entity === "Sole trader" ? "wrench" : "user"} size={11} />
-                    {c.name}
-                  </div>
-                );
-              })}
-              {custMatches.length === 0 && (
-                <span style={{ fontSize: 11, color: "var(--text-faint)" }}>Nothing matches "{custQuery}".</span>
-              )}
-              {hiddenCount > 0 && (
-                <span style={{ fontSize: 11, color: "var(--text-faint)", alignSelf: "center" }}>
-                  +{hiddenCount} more — {cq ? "keep typing" : "search to find them"}
-                </span>
-              )}
-            </div>
             {effectiveCustomer && (
               <div
                 style={{
@@ -551,7 +582,35 @@ export default function NewOrder() {
               </div>
             )}
             {quickBlock.blocked && (
-              <div style={{ fontSize: 11, color: "var(--feedback-danger)", textWrap: "pretty" as any }}>{quickBlock.reason}</div>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 7,
+                  padding: "9px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--feedback-danger)",
+                  background: "color-mix(in srgb, var(--feedback-danger) 8%, transparent)",
+                }}
+              >
+                <div style={{ fontSize: 11, color: "var(--feedback-danger)", textWrap: "pretty" as any }}>{quickBlock.reason}</div>
+                {/* The yard does let good customers keep ordering through a slow
+                    month — that is a decision somebody makes, though, not a
+                    thing that should happen quietly, so it is recorded on the
+                    order's notes rather than just waved through. */}
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 7, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={creditOverride}
+                    onChange={(e) => setCreditOverride(e.target.checked)}
+                    style={{ marginTop: 2, flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", textWrap: "pretty" as any }}>
+                    Take this order anyway. It goes on their account as normal and the override is written into the
+                    order notes, so the office can see it was a decision.
+                  </span>
+                </label>
+              </div>
             )}
           </>
         )}
@@ -568,8 +627,16 @@ export default function NewOrder() {
             { id: "yardsale", label: "Yard sale", icon: "zap" },
           ]}
           activeId={ui.orderMode}
+          /* Switching between a counter sale and a delivery keeps the goods and
+             the customer. A customer who changes their mind at the counter used
+             to mean starting the whole order again. */
           onSelect={(id: string) =>
-            ui.set({ orderStep: 1, orderMode: id as any, cart: id === "yardsale" ? [] : cart, yardCustomer: false })
+            ui.set({
+              orderStep: 1,
+              orderMode: id as any,
+              cart,
+              yardCustomer: id === "yardsale" ? !!ui.customerId : false,
+            })
           }
           variant="segmented"
           style={{ width: 290, flexShrink: 0 }}
@@ -702,36 +769,57 @@ export default function NewOrder() {
                   </div>
                 )}
 
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <div style={{ flex: "1 1 240px", minWidth: 200 }}>
-                    <Input size="md" icon="search" placeholder="Search products or scan a barcode" value={prodQuery} onChange={(e: any) => setProdQuery(e.target.value)} />
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".09em", color: "var(--text-faint)" }}>Step</span>
-                    {[0.25, 0.5, 1, 2, 5, 10].map((n) => {
-                      const on = ui.qtyStep === n;
-                      return (
-                        <div
-                          key={n}
-                          onClick={() => ui.set({ qtyStep: n })}
-                          style={{
-                            cursor: "pointer",
-                            minWidth: 36,
-                            textAlign: "center",
-                            fontSize: 12,
-                            fontWeight: 600,
-                            padding: "6px 10px",
-                            borderRadius: 6,
-                            border: `1px solid ${on ? "var(--border-strong)" : "var(--border-subtle)"}`,
-                            background: on ? "var(--surface-active)" : "transparent",
-                            color: on ? "var(--text-primary)" : "var(--text-muted)",
-                          }}
-                        >
-                          +{n}
-                        </div>
-                      );
-                    })}
-                  </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <Input
+                    size="md"
+                    icon="search"
+                    placeholder="Search products, or type 0.5*sand to load half a metre"
+                    value={prodQuery}
+                    onChange={(e: any) => setProdQuery(e.target.value)}
+                    onKeyDown={(e: any) => {
+                      /* Enter on a search carrying an amount loads the top match
+                         at that amount and clears the box, so a phone order is
+                         one line of typing per product. */
+                      if (e.key !== "Enter" || parsed.qty === null) return;
+                      const hit = visibleProducts[0];
+                      if (!hit) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      addProduct(hit.id, parsed.qty);
+                      setProdQuery("");
+                    }}
+                  />
+                  {parsed.qty !== null && (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        padding: "6px 9px",
+                        borderRadius: 7,
+                        border: "1px solid var(--border-accent)",
+                        background: "var(--om-chip-active-bg)",
+                        fontSize: 11.5,
+                        color: "var(--text-muted)",
+                        textWrap: "pretty" as any,
+                      }}
+                    >
+                      <Icon name="corner-down-left" size={12} color="var(--brand-primary)" />
+                      {visibleProducts.length ? (
+                        <span>
+                          Enter loads{" "}
+                          <strong style={{ color: "var(--text-primary)" }}>
+                            {qtyText(parsed.qty, visibleProducts[0].unit)} {visibleProducts[0].name}
+                          </strong>
+                          {visibleProducts.length > 1 ? ` — or tap any of the ${visibleProducts.length} below` : ""}
+                        </span>
+                      ) : (
+                        <span>
+                          {parsed.qty} of — nothing matches "{parsed.text.trim()}" yet.
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <CategoryPicker options={categoryOptions} value={catFilter} onChange={setCatFilter} />
@@ -782,7 +870,7 @@ export default function NewOrder() {
                                  another unit, so it swallows the card's click. */
                               <div
                                 onClick={(e) => e.stopPropagation()}
-                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, paddingTop: 2 }}
+                                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, paddingTop: 2 }}
                               >
                                 <Button
                                   variant="outline"
@@ -793,13 +881,18 @@ export default function NewOrder() {
                                     if (idx >= 0) bumpLine(idx, -1);
                                   }}
                                 />
-                                <span className="tabular" style={{ fontSize: 12, fontWeight: 600, color: "var(--brand-secondary)" }}>
-                                  {qtyText(inCart, p.unit)}
-                                </span>
+                                <CardQty
+                                  qty={inCart}
+                                  unit={p.unit}
+                                  divisible={unitFor(p).divisible}
+                                  onCommit={(n) => setProductQty(p.id, n)}
+                                />
                                 <Button variant="outline" size="sm" iconLeft="plus" onClick={() => addProduct(p.id)} />
                               </div>
                             ) : (
-                              <div style={{ fontSize: 11, color: "var(--text-faint)", paddingTop: 2 }}>Tap to add</div>
+                              <div style={{ fontSize: 11, color: "var(--text-faint)", paddingTop: 2 }}>
+                                {parsed.qty !== null ? `Tap to add ${qtyText(parsed.qty, p.unit)}` : `Tap to add ${qtyText(unitFor(p).min, p.unit)}`}
+                              </div>
                             )
                           }
                         />
@@ -823,7 +916,22 @@ export default function NewOrder() {
             </Card>
           </div>
 
-          <div className="order-cart" style={{ display: "flex", flexDirection: "column", gap: 12, flex: "1 1 320px", minWidth: 290, maxWidth: 400 }}>
+          {/* Side by side when there is room. In a split-screen pane the two
+              columns stack, and then the cart goes on top: underneath it would
+              be behind nine hundred product cards, which is the same problem
+              the sticky cart was built to solve. */}
+          <div
+            className={tight ? "order-cart order-cart--stacked" : "order-cart"}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              flex: tight ? "1 1 100%" : "1 1 320px",
+              minWidth: tight ? 0 : 290,
+              maxWidth: tight ? "none" : 400,
+              order: tight ? -1 : 0,
+            }}
+          >
             {customerPickerCard}
 
             <Card title={yard ? "Counter sale" : "Cart"} subtitle={isSplitDraft ? "Tap a letter to move that line to the next delivery" : undefined} padding="default">
@@ -1002,12 +1110,18 @@ export default function NewOrder() {
                         const rate = suburbRate(d.suburbId, suburbs);
                         const pd = perDraft[i];
                         const site = effectiveCustomer?.sites.find((x) => x.street === d.street && x.suburb_id === d.suburbId);
-                        const siteOptions = (effectiveCustomer?.sites || [])
+                        /* The six addresses this customer has most recently had
+                           goods delivered to, newest first, with any the yard
+                           named itself in front. Most repeat customers here have
+                           more than six on file, and the ones that matter today
+                           are the ones a truck went to this month — the rest are
+                           still on the customer's own record. */
+                        const siteOptions = recentSites(effectiveCustomer)
                           .map((x) => ({
                             value: x.id,
                             label: `${x.label} — ${x.street}, ${suburbs.find((s) => s.id === x.suburb_id)?.name || ""}`,
                           }))
-                          .concat([{ value: "new", label: "New address" }]);
+                          .concat([{ value: "new", label: "Somewhere else — type it below" }]);
                         const suburbNm = suburbs.find((s) => s.id === d.suburbId)?.name;
                         return (
                           <div key={d.letter} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 9, borderRadius: 10, border: `1px solid ${isSplitDraft ? "var(--border-default)" : "var(--border-subtle)"}`, background: "var(--bg-sunken)" }}>
@@ -1329,15 +1443,21 @@ export default function NewOrder() {
                 )}
 
                 {quickBlock.blocked && (
-                  <Alert tone="danger" title="This customer is on stop credit" icon="circle-alert">
-                    {quickBlock.reason}
+                  <Alert
+                    tone={creditOverride ? "warning" : "danger"}
+                    title={creditOverride ? "Going out over stop credit" : "This customer is on stop credit"}
+                    icon="circle-alert"
+                  >
+                    {creditOverride
+                      ? "Ticked on the customer card above. The order will be taken and the override noted on it."
+                      : quickBlock.reason + " Tick the box on the customer card to take the order anyway."}
                   </Alert>
                 )}
               </div>
 
               <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, paddingTop: 10, borderTop: "1px solid var(--border-subtle)" }}>
                 <Button variant="primary" size="lg" iconLeft="check" fullWidth disabled={createDisabled} onClick={() => void doCreate()}>
-                  {quickBlock.blocked
+                  {creditHeld
                     ? "Ordering on hold"
                     : yard
                       ? "Take payment"
@@ -1361,7 +1481,89 @@ export default function NewOrder() {
         </div>
       )}
 
-      <DateWindowPicker />
+
+      {newCustOpen && (
+        <NewCustomerModal
+          onClose={() => setNewCustOpen(false)}
+          onCreated={(c) => {
+            pickCustomer(c.id, c);
+            if (yard) ui.set({ yardCustomer: true });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* The quantity on a product card, typed rather than clicked at. Kept verbatim
+   while focused so "0.5" can be typed through "" and "0."; committed on blur or
+   Enter; emptied to take the product back off the order. */
+function CardQty({
+  qty,
+  unit,
+  divisible,
+  onCommit,
+}: {
+  qty: number;
+  unit: string;
+  divisible: boolean;
+  onCommit: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft === null ? String(Number(qty.toFixed(3))) : draft;
+
+  const commit = () => {
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    setDraft(null);
+    if (draft.trim() === "") return onCommit(0);
+    if (isNaN(n) || Math.abs(n - qty) < 0.0005) return;
+    onCommit(n);
+  };
+
+  return (
+    <div
+      title={divisible ? `Type any amount in ${unit}` : `Sold by the ${unit} — whole numbers`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 3,
+        flex: 1,
+        minWidth: 0,
+        justifyContent: "center",
+        height: 26,
+        padding: "0 4px",
+        borderRadius: 6,
+        border: "1px solid var(--border-default)",
+        background: "var(--surface-input)",
+      }}
+    >
+      <input
+        value={value}
+        inputMode="decimal"
+        aria-label={`Quantity in ${unit}`}
+        onChange={(e) => setDraft(e.target.value.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1"))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") setDraft(null);
+        }}
+        style={{
+          width: "100%",
+          minWidth: 0,
+          border: "none",
+          outline: "none",
+          background: "transparent",
+          textAlign: "right",
+          fontFamily: "inherit",
+          fontSize: 12,
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+          color: "var(--brand-secondary)",
+        }}
+      />
+      <span style={{ fontSize: 10, color: "var(--text-faint)", flexShrink: 0 }}>{unit}</span>
     </div>
   );
 }
@@ -1397,177 +1599,3 @@ function SmallBtn({ children, onClick, title, size = 22 }: { children: React.Rea
   );
 }
 
-function PickerField({ label, icon, value, onClick }: { label: string; icon: string; value: string; onClick: () => void }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 11, color: "var(--text-faint)" }}>{label}</span>
-      <div
-        onClick={onClick}
-        style={{
-          cursor: "pointer",
-          height: 36,
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "0 10px",
-          borderRadius: 6,
-          border: "1px solid var(--border-default)",
-          background: "var(--surface-input)",
-          fontSize: 13,
-          color: "var(--text-primary)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <Icon name={icon} size={14} color="var(--text-faint)" />
-        {value}
-      </div>
-    </div>
-  );
-}
-
-/* Date & window picker modal — calendar plus priority + 30/60 minute windows. */
-function DateWindowPicker() {
-  const ui = useUi();
-  const picker = ui.picker;
-  const now = new Date();
-  const [view, setView] = useState({ y: now.getFullYear(), m: now.getMonth() });
-  if (!picker) return null;
-
-  const close = () => ui.set({ picker: null });
-  const pick = (v: string) => {
-    picker.onPick(v);
-    close();
-  };
-
-  const grid = (() => {
-    const first = new Date(view.y, view.m, 1);
-    const startDow = first.getDay();
-    const days = new Date(view.y, view.m + 1, 0).getDate();
-    const cells: (number | null)[] = [];
-    for (let i = 0; i < startDow; i++) cells.push(null);
-    for (let d = 1; d <= days; d++) cells.push(d);
-    while (cells.length % 7 !== 0) cells.push(null);
-    return cells;
-  })();
-
-  const [selD, selM, selY] = String(picker.current || "")
-    .split("/")
-    .map(Number);
-
-  return (
-    <div
-      onClick={close}
-      style={{ position: "fixed", inset: 0, zIndex: 26, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "rgba(6,7,15,.72)", backdropFilter: "blur(10px) saturate(140%)" }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: "min(340px,100%)", maxHeight: "min(560px,90vh)", display: "flex", flexDirection: "column", borderRadius: 16, background: "var(--surface-card)", border: "1px solid var(--border-default)", boxShadow: "0 24px 64px rgba(0,0,0,.6)", overflow: "hidden" }}
-      >
-        <div style={{ flexShrink: 0, padding: "14px 16px", borderBottom: "1px solid var(--border-subtle)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
-            {picker.kind === "date" ? "Pick a date" : "Priority & delivery window"}
-          </span>
-          <div onClick={close} style={{ cursor: "pointer", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, color: "var(--text-muted)" }}>
-            <Icon name="x" size={14} />
-          </div>
-        </div>
-
-        {picker.kind === "date" ? (
-          <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <NavBtn dir="arrow-left" onClick={() => setView((v) => (v.m === 0 ? { y: v.y - 1, m: 11 } : { y: v.y, m: v.m - 1 }))} />
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-                {new Date(view.y, view.m, 1).toLocaleDateString("en-AU", { month: "long", year: "numeric" })}
-              </span>
-              <NavBtn dir="arrow-right" onClick={() => setView((v) => (v.m === 11 ? { y: v.y + 1, m: 0 } : { y: v.y, m: v.m + 1 }))} />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
-              {["S", "M", "T", "W", "T", "F", "S"].map((dw, i) => (
-                <div key={i} style={{ textAlign: "center", fontSize: 11, color: "var(--text-faint)" }}>
-                  {dw}
-                </div>
-              ))}
-              {grid.map((d, i) => {
-                if (d === null) return <div key={i} />;
-                const isSel = d === selD && view.m === (selM || 0) - 1 && view.y === selY;
-                const isToday = d === now.getDate() && view.m === now.getMonth() && view.y === now.getFullYear();
-                return (
-                  <div
-                    key={i}
-                    onClick={() => pick(`${String(d).padStart(2, "0")}/${String(view.m + 1).padStart(2, "0")}/${view.y}`)}
-                    style={{
-                      cursor: "pointer",
-                      aspectRatio: "1",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      borderRadius: 8,
-                      fontSize: 13,
-                      background: isSel ? "var(--brand-primary)" : "transparent",
-                      color: isSel ? "#ffffff" : "var(--text-primary)",
-                      border: isToday && !isSel ? "1px solid var(--border-accent)" : "1px solid transparent",
-                    }}
-                  >
-                    {d}
-                  </div>
-                );
-              })}
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => setView({ y: now.getFullYear(), m: now.getMonth() })}>
-              Today
-            </Button>
-          </div>
-        ) : (
-          <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
-            <SectionLabel>Priority</SectionLabel>
-            {[
-              { value: "Urgent", icon: "zap", color: "var(--feedback-danger)" },
-              { value: "ASAP", icon: "clock-fading", color: "var(--attention)" },
-              { value: "Any time", icon: "calendar-clock", color: "var(--text-muted)" },
-            ].map((p) => (
-              <div key={p.value} onClick={() => pick(p.value)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", background: picker.current === p.value ? "var(--surface-active)" : "transparent" }}>
-                <Icon name={p.icon} size={16} color={p.color} />
-                <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{p.value}</span>
-              </div>
-            ))}
-            <SectionLabel>30-Minute Windows</SectionLabel>
-            {WINDOWS_30.map((w) => (
-              <WindowRow key={w} label={w} selected={picker.current === w} onClick={() => pick(w)} />
-            ))}
-            <SectionLabel>1-Hour Windows</SectionLabel>
-            {WINDOWS_60.map((w) => (
-              <WindowRow key={w} label={w} selected={picker.current === w} onClick={() => pick(w)} />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ padding: "12px 16px 4px", fontSize: 11, textTransform: "uppercase", letterSpacing: ".09em", color: "var(--text-faint)" }}>
-      {children}
-    </div>
-  );
-}
-
-function NavBtn({ dir, onClick }: { dir: string; onClick: () => void }) {
-  return (
-    <div onClick={onClick} style={{ cursor: "pointer", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid var(--border-subtle)", color: "var(--text-muted)" }}>
-      <Icon name={dir} size={14} />
-    </div>
-  );
-}
-
-function WindowRow({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
-  return (
-    <div onClick={onClick} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", background: selected ? "var(--surface-active)" : "transparent" }}>
-      <Icon name="clock" size={14} color="var(--text-faint)" />
-      <span style={{ fontSize: 13, color: "var(--text-primary)" }}>{label}</span>
-    </div>
-  );
-}

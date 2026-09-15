@@ -81,3 +81,11 @@
 .order-cart > * {
   flex-shrink: 0;
 }
+
+/* Split screen: the two columns of the new-order screen stack, and the cart
+   goes above the catalogue rather than below nine hundred product cards. It
+   keeps a capped height so it cannot push the products off the screen
+   altogether — a long order scrolls within its own box. */
+.order-cart--stacked {
+  max-height: min(46vh, 420px);
+}

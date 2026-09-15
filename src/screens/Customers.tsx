@@ -1,21 +1,27 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store/store";
 import HistoryNotice from "./HistoryNotice";
+import NewCustomerModal from "./NewCustomerModal";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
-import type { Customer } from "../lib/types";
+import type { Customer, CustomerSite, Suburb } from "../lib/types";
 import { applyCustomerImport, exportCustomersCsv, planCustomerImport, type ImportPlan } from "../data/customerIo";
 import ImportPreview, { type PreviewRow } from "./ImportPreview";
+import Confirm from "./Confirm";
 import {
   addContact,
   addSite,
   createCustomer,
+  customerOrderCount,
+  deleteCustomer,
   generateStatement,
   genPin,
   monthLabel,
   patchCustomer,
+  patchSite,
   printStatement,
   removeContact,
+  removeSite,
   statementLines,
   statementMonths,
 } from "../data/api";
@@ -56,6 +62,7 @@ export default function Customers() {
 
   const cust = ui.custId ? customers.find((c) => c.id === ui.custId) || null : null;
   const cBlock = blockedState(cust);
+  const book = useMemo(() => customers.filter((c) => !c.archived_at), [customers]);
 
   const q = query.trim().toLowerCase();
   /* Two and a half thousand accounts, rebuilt and re-rendered on every
@@ -64,6 +71,9 @@ export default function Customers() {
   const matching = useMemo(
     () =>
       customers.filter((c) => {
+      /* Archived: removed from the book but still on their old orders, so the
+         row has to stay loaded and must not be listed. */
+      if (c.archived_at) return false;
       if (entityFilter !== "Everyone" && c.entity !== entityFilter) return false;
       if (billingFilter === "Prepaid" && c.billing !== "prepaid") return false;
       if (billingFilter === "Account" && c.billing !== "account") return false;
@@ -110,10 +120,10 @@ export default function Customers() {
       </Alert>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 10 }}>
-        <StatCard label="Customers" value={String(customers.length)} icon="users" tone="neutral" />
-        <StatCard label="On account" value={String(customers.filter((c) => c.billing === "account").length)} icon="credit-card" tone="info" />
-        <StatCard label="Owing" value={AUD0(customers.reduce((t, c) => t + Number(c.balance), 0))} icon="wallet" tone="warning" />
-        <StatCard label="Blocked" value={String(customers.filter((c) => blockedState(c).blocked).length)} icon="circle-alert" tone="danger" />
+        <StatCard label="Customers" value={String(book.length)} icon="users" tone="neutral" />
+        <StatCard label="On account" value={String(book.filter((c) => c.billing === "account").length)} icon="credit-card" tone="info" />
+        <StatCard label="Owing" value={AUD0(book.reduce((t, c) => t + Number(c.balance), 0))} icon="wallet" tone="warning" />
+        <StatCard label="Blocked" value={String(book.filter((c) => blockedState(c).blocked).length)} icon="circle-alert" tone="danger" />
       </div>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -398,6 +408,9 @@ function CustomerDrawer(props: {
   const app = useApp();
   const { cust, cBlock, custOrders, custStatements, suburbName } = props;
   const [siteAddOpen, setSiteAddOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const orderCount = customerOrderCount(cust.id);
   const [newSite, setNewSite] = useState({ label: "", street: "", suburbId: "" });
   const [newContact, setNewContact] = useState({ name: "", phone: "", email: "", role: "Orders" });
 
@@ -438,7 +451,44 @@ function CustomerDrawer(props: {
         <Button variant="secondary" size="sm" iconLeft="file-text" disabled={cust.billing !== "account"} onClick={props.openStatement}>
           Generate statement
         </Button>
+        <div style={{ flex: 1 }} />
+        <Button variant="ghost" size="sm" iconLeft="trash-2" onClick={() => setConfirmDelete(true)}>
+          Delete
+        </Button>
       </div>
+
+      {confirmDelete && (
+        <Confirm
+          title={`${orderCount ? "Archive" : "Delete"} ${cust.name}?`}
+          confirmLabel={orderCount ? "Archive customer" : "Delete customer"}
+          busy={deleting}
+          onClose={() => setConfirmDelete(false)}
+          onConfirm={() => {
+            setDeleting(true);
+            void deleteCustomer(cust.id).then((outcome) => {
+              setDeleting(false);
+              setConfirmDelete(false);
+              if (outcome) props.onClose();
+            });
+          }}
+        >
+          {orderCount ? (
+            <>
+              They have {orderCount.toLocaleString()} {orderCount === 1 ? "order" : "orders"} on file, so the record
+              cannot simply be destroyed — statements, tax invoices and four years of history all read the name through
+              it. It comes out of the customer list and out of every picker instead, and those orders go on reading
+              correctly.
+            </>
+          ) : (
+            <>
+              They have never ordered, so there is nothing pointing at the record. It goes for good, along with{" "}
+              {cust.contacts.length === 1 ? "their contact" : `their ${cust.contacts.length} contacts`} and{" "}
+              {cust.sites.length === 1 ? "one saved address" : `${cust.sites.length} saved addresses`}. This cannot be
+              undone.
+            </>
+          )}
+        </Confirm>
+      )}
 
       <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
         {cBlock.blocked && (
@@ -569,35 +619,23 @@ function CustomerDrawer(props: {
               </Card>
             )}
 
-            <Card title="Delivery sites" subtitle="Where their goods actually go" padding="default">
+            <Card
+              title="Delivery addresses"
+              subtitle="Where their goods actually go — the six most recent are offered on a new order"
+              padding="default"
+            >
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {cust.sites.map((s) => {
-                  const r = suburbRate(s.suburb_id, app.suburbs);
-                  return (
-                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 8, background: "var(--surface-raised)" }}>
-                      <Icon name="map-pin" size={13} color="var(--text-faint)" />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {s.street}, {suburbName(s.suburb_id)} VIC {r.postcode}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                          {s.label} · delivery {AUD(r.fee)}
-                        </div>
-                      </div>
-                      <a
-                        href={"https://www.google.com/maps/search/" + encodeURIComponent(`${s.street} ${suburbName(s.suburb_id)} VIC ${r.postcode}`)}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Open in Google Maps"
-                        style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}
-                      >
-                        <Icon name="external-link" size={12} />
-                        Map
-                      </a>
-                      {s.is_default && <Badge tone="neutral">Default</Badge>}
-                    </div>
-                  );
-                })}
+                {[...cust.sites]
+                  .sort((a, b) => Date.parse(b.last_used_at || "") - Date.parse(a.last_used_at || "") || a.label.localeCompare(b.label))
+                  .map((s) => (
+                    <SiteRow key={s.id} customerId={cust.id} site={s} suburbs={app.suburbs} />
+                  ))}
+                {cust.sites.length === 0 && (
+                  <div style={{ fontSize: 12, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                    Nothing on file yet. An address is saved here automatically the first time an order is delivered to
+                    it, or you can add one now.
+                  </div>
+                )}
                 {siteAddOpen && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 8, border: "1px dashed var(--border-accent)", background: "var(--om-inline-add-bg)" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 8 }}>
@@ -886,146 +924,6 @@ function CreditTile({ label, value, color }: { label: string; value: string; col
   );
 }
 
-function NewCustomerModal({ onClose, onCreated }: { onClose: () => void; onCreated: (c: Customer) => void }) {
-  const app = useApp();
-  const [n2, setN2] = useState({
-    kind: "Company" as Customer["entity"],
-    name: "",
-    abn: "",
-    contact: "",
-    phone: "",
-    email: "",
-    tier: "Trade" as Customer["tier"],
-    billing: "Account" as "Prepaid" | "Account",
-    terms: "30",
-    limit: "10000",
-    street: "",
-    suburbId: "",
-  });
-  const patch = (p: Partial<typeof n2>) => setN2((s) => ({ ...s, ...p }));
-  const suburbName = (id: string) => app.suburbs.find((s) => s.id === id)?.name || "";
-
-  return (
-    <div
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 26, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 24, overflowY: "auto", background: "var(--om-scrim)", backdropFilter: "blur(10px) saturate(140%)" }}
-    >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px,100%)", borderRadius: 16, background: "var(--surface-card)", border: "1px solid var(--border-default)", boxShadow: "var(--om-overlay-shadow)", overflow: "hidden" }}>
-        <div style={{ padding: 16, borderBottom: "1px solid var(--border-subtle)" }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>Add a customer</div>
-          <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 3 }}>
-            {n2.kind === "Individual"
-              ? "One person, one contact. Retail pricing and prepaid unless you say otherwise."
-              : n2.kind === "Sole trader"
-                ? "A person trading under their own name — they can hold trade pricing and an account."
-                : "A business with several people who can order, and one place invoices go."}
-          </div>
-        </div>
-
-        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          <Tabs
-            items={[
-              { id: "Individual", label: "A person", icon: "user" },
-              { id: "Sole trader", label: "Sole trader", icon: "wrench" },
-              { id: "Company", label: "Company", icon: "building-2" },
-            ]}
-            activeId={n2.kind}
-            onSelect={(id: string) => patch({ kind: id as any, billing: id === "Individual" ? "Prepaid" : n2.billing })}
-            variant="segmented"
-            fullWidth
-          />
-          <Input size="md" label={n2.kind === "Company" ? "Business name" : "Full name"} value={n2.name} onChange={(e: any) => patch({ name: e.target.value })} placeholder={n2.kind === "Company" ? "e.g. Barwon Building Supplies" : "e.g. Dean Pearce"} />
-          {n2.kind === "Company" && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10 }}>
-              <Input size="sm" label="ABN (optional)" value={n2.abn} onChange={(e: any) => patch({ abn: e.target.value })} placeholder="00 000 000 000" />
-              <Input size="sm" label="Person who orders" value={n2.contact} onChange={(e: any) => patch({ contact: e.target.value })} placeholder="Who to ask for" />
-            </div>
-          )}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10 }}>
-            <Input size="sm" label="Phone (optional)" value={n2.phone} onChange={(e: any) => patch({ phone: e.target.value })} placeholder="0412 000 000" />
-            <Input size="sm" label="Email (optional)" value={n2.email} onChange={(e: any) => patch({ email: e.target.value })} placeholder="name@example.com.au" />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
-            <Select size="sm" label="What they pay" options={["Retail", "Trade"]} value={n2.tier} onChange={(e: any) => patch({ tier: e.target.value })} />
-            <Select size="sm" label="How they settle" options={["Prepaid", "Account"]} value={n2.billing} onChange={(e: any) => patch({ billing: e.target.value })} />
-          </div>
-          {n2.billing === "Account" && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
-              <Select
-                size="sm"
-                label="Terms"
-                options={[
-                  { value: "7", label: "7 days" },
-                  { value: "14", label: "14 days" },
-                  { value: "30", label: "30 days" },
-                ]}
-                value={n2.terms}
-                onChange={(e: any) => patch({ terms: e.target.value })}
-              />
-              <Input size="sm" label="Credit limit" value={n2.limit} onChange={(e: any) => patch({ limit: e.target.value.replace(/[^0-9.]/g, "") })} suffix="AUD" />
-            </div>
-          )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 9, padding: 10, borderRadius: 10, border: "1px solid var(--border-subtle)", background: "var(--bg-sunken)" }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>Delivery address</div>
-            <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
-              Optional now — but until a suburb is on file no delivery fee can be worked out, so orders will ask for one.
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-              <Input size="sm" label="Street" value={n2.street} onChange={(e: any) => patch({ street: e.target.value })} placeholder="88 Barwon Heads Rd" />
-              <Select
-                size="sm"
-                label="Suburb"
-                options={app.suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }))}
-                value={n2.suburbId}
-                onChange={(e: any) => patch({ suburbId: e.target.value })}
-                allowUnset
-              />
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
-              {n2.suburbId
-                ? `Deliveries to ${suburbName(n2.suburbId)} cost ${AUD(suburbRate(n2.suburbId, app.suburbs).fee)}.`
-                : "No suburb yet — you can add one from the customer's Overview tab later."}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border-subtle)", display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <Button variant="ghost" size="md" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="md"
-            iconLeft="check"
-            disabled={!n2.name.trim()}
-            onClick={() => {
-              void createCustomer({
-                kind: n2.kind,
-                name: n2.name.trim(),
-                abn: n2.abn.trim(),
-                contact: n2.contact.trim(),
-                phone: n2.phone.trim(),
-                email: n2.email.trim(),
-                tier: n2.tier,
-                billing: n2.billing,
-                termsDays: Number(n2.terms),
-                limit: Number(n2.limit) || 0,
-                street: n2.street.trim(),
-                suburbId: n2.suburbId || null,
-              }).then((c) => {
-                if (c) onCreated(c);
-              });
-              onClose();
-            }}
-          >
-            Add customer
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function StatementModal({
   cust,
   state,
@@ -1110,3 +1008,135 @@ function StatementModal({
   );
 }
 
+/* One saved delivery address.
+
+   It reads as a line until you open it, because most of the time you are
+   scanning the list for the right street rather than editing one. Opened, every
+   field is editable including the label, which is the point: "back paddock,
+   second gate, dog" is the kind of thing that has to be written down once and
+   read by every driver after, and the yard had no way to write it.
+
+   Naming an address the app captured on its own also keeps it: only unnamed
+   auto-captured ones are trimmed to the six most recent. */
+function SiteRow({ customerId, site, suburbs }: { customerId: string; site: CustomerSite; suburbs: Suburb[] }) {
+  const [open, setOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [form, setForm] = useState({ label: site.label, street: site.street, suburbId: site.suburb_id || "" });
+  const r = suburbRate(site.suburb_id, suburbs);
+  const name = suburbs.find((x) => x.id === site.suburb_id)?.name || "";
+  const dirty = form.label !== site.label || form.street !== site.street || form.suburbId !== (site.suburb_id || "");
+
+  const used = site.last_used_at
+    ? `last delivered ${new Date(site.last_used_at).toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "numeric" })}`
+    : "never delivered to";
+
+  return (
+    <div style={{ borderRadius: 8, background: "var(--surface-raised)", border: `1px solid ${open ? "var(--border-default)" : "transparent"}` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px" }}>
+        <Icon name="map-pin" size={13} color="var(--text-faint)" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {site.street}, {name} {r.state} {r.postcode}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {site.label} · delivery {AUD(r.fee)} · {used}
+          </div>
+        </div>
+        <a
+          href={"https://www.google.com/maps/search/" + encodeURIComponent(`${site.street} ${name} ${r.state} ${r.postcode}`)}
+          target="_blank"
+          rel="noreferrer"
+          title="Open in Google Maps"
+          style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, flexShrink: 0 }}
+        >
+          <Icon name="external-link" size={12} />
+          Map
+        </a>
+        {site.is_default && <Badge tone="neutral">Default</Badge>}
+        {site.auto_captured && !open && (
+          <span title="Saved automatically when an order went here. Give it a name to keep it." style={{ fontSize: 10, color: "var(--text-faint)", whiteSpace: "nowrap" }}>
+            auto
+          </span>
+        )}
+        <div
+          onClick={() => setOpen(!open)}
+          title={open ? "Done" : "Edit this address"}
+          style={{ cursor: "pointer", width: 24, height: 24, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 5, border: "1px solid var(--border-default)", color: "var(--text-muted)" }}
+        >
+          <Icon name={open ? "x" : "pencil"} size={11} />
+        </div>
+      </div>
+
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "0 10px 10px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8 }}>
+            <Input
+              size="sm"
+              label="Label"
+              value={form.label}
+              onChange={(e: any) => setForm({ ...form, label: e.target.value })}
+              placeholder="e.g. Back paddock — second gate"
+            />
+            <Input size="sm" label="Street" value={form.street} onChange={(e: any) => setForm({ ...form, street: e.target.value })} />
+          </div>
+          <Select
+            size="sm"
+            label="Suburb"
+            options={suburbs.filter((x) => x.active).map((x) => ({ value: x.id, label: x.name }))}
+            value={form.suburbId}
+            onChange={(e: any) => setForm({ ...form, suburbId: e.target.value })}
+            allowUnset
+          />
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <Button
+              variant="primary"
+              size="sm"
+              iconLeft="check"
+              disabled={!dirty || !form.street.trim()}
+              onClick={() => {
+                patchSite(customerId, site.id, {
+                  label: form.label.trim() || site.label,
+                  street: form.street.trim(),
+                  suburb_id: form.suburbId || null,
+                });
+                setOpen(false);
+              }}
+            >
+              Save
+            </Button>
+            {!site.is_default && (
+              <Button variant="ghost" size="sm" iconLeft="star" onClick={() => patchSite(customerId, site.id, { is_default: true })}>
+                Make default
+              </Button>
+            )}
+            <div style={{ flex: 1 }} />
+            <Button variant="ghost" size="sm" iconLeft="trash-2" onClick={() => setConfirmRemove(true)}>
+              Remove
+            </Button>
+          </div>
+          {site.auto_captured && (
+            <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+              Saved automatically when an order was delivered here. Only unnamed addresses like this one are dropped
+              once there are more than six — giving it a name keeps it for good.
+            </div>
+          )}
+        </div>
+      )}
+
+      {confirmRemove && (
+        <Confirm
+          title={`Remove ${site.street}?`}
+          confirmLabel="Remove address"
+          onClose={() => setConfirmRemove(false)}
+          onConfirm={() => {
+            removeSite(customerId, site.id);
+            setConfirmRemove(false);
+          }}
+        >
+          Orders already delivered here keep the address on them — it is copied onto the order when the order is taken.
+          This only takes it off the list offered on the next one.
+        </Confirm>
+      )}
+    </div>
+  );
+}

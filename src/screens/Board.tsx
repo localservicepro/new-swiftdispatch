@@ -4,18 +4,24 @@ import { useUi } from "../store/ui";
 import {
   AUD,
   AUD0,
+  CLASS_STYLE,
+  customerBadgeType,
   deliverySortKey,
   feeOf,
   goodsOf,
   LANES,
   orderTotal,
   placedText,
+  qtyText,
   shortDate,
   suburbRate,
 } from "../lib/domain";
 import type { Order, OrderStatus } from "../lib/types";
 import { assignCrew, moveOrder } from "../data/api";
 import { Card, DataTable, Icon, Input, OrderCard, Select, Tabs, Button } from "../design-system/components.js";
+import { GoodsCell, NotesCell } from "./OrderLines";
+import { itemsText } from "../lib/domain";
+import { useViewport } from "../lib/viewport";
 
 /* Cards drawn per lane before "Show more". The stage counts in the headers are
    always the real ones — this only bounds how much of a lane becomes DOM. */
@@ -23,7 +29,8 @@ const LANE_PAGE = 100;
 
 export default function Board() {
   const ui = useUi();
-  const { orders, orderItems, suburbs, customers, trucks, team, paySettings } = useApp();
+  const { tight } = useViewport();
+  const { orders, orderItems, suburbs, customers, trucks, team, products, paySettings } = useApp();
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [query, setQuery] = useState("");
   const [dragging, setDragging] = useState<{ id: string; from: OrderStatus } | null>(null);
@@ -47,6 +54,23 @@ export default function Board() {
   };
   const driverLabel = (id: string | null) => team.find((x) => x.id === id)?.name;
 
+  /* Who can be put on a run. Not only the drivers: several people at the yard
+     work the office as an admin and take a truck out when it is busy, and the
+     list that left them off meant those jobs showed as unassigned all day. A
+     driver is still listed as a driver — the role is what they mostly do, not a
+     rule about who may hold a delivery. */
+  const crewOptions = useMemo(
+    () =>
+      team
+        .filter((t) => t.active && t.role !== "super_admin")
+        .concat(team.filter((t) => t.active && t.role === "super_admin"))
+        .map((t) => ({ value: t.id, label: t.role === "driver" ? t.name : `${t.name} — ${t.role === "admin" ? "admin" : "super admin"}` })),
+    [team]
+  );
+
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const classOf = (o: Order) => customerBadgeType(customerOf(o));
+
   const q = query.trim().toLowerCase();
   const matches = (o: Order) => {
     if (!q) return true;
@@ -56,6 +80,10 @@ export default function Board() {
       c?.name,
       o.walk_in_name,
       o.po_number,
+      /* Dispatch knows a job by where it is going at least as often as by who
+         ordered it, so the street and suburb are searchable too. */
+      o.street,
+      suburbs.find((s) => s.id === o.suburb_id)?.name,
       ...(c?.contacts.map((ct) => `${ct.name} ${ct.phone || ""}`) || []),
     ]
       .filter(Boolean)
@@ -71,7 +99,7 @@ export default function Board() {
 
   const lanes = LANES.map((lane) => {
     const all = live
-      .filter((o) => o.status === lane.id && matches(o))
+      .filter((o) => lane.statuses.includes(o.status) && matches(o))
       .sort((a, b) => deliverySortKey(a) - deliverySortKey(b));
     const value = all.reduce((s, c) => s + totalOf(c), 0);
     boardCount += all.length;
@@ -129,23 +157,51 @@ export default function Board() {
   };
 
   const boardCols = [
-    { key: "stage", header: "Stage", width: 150 },
-    { key: "number", header: "Order", mono: true, width: 150 },
-    { key: "customer", header: "Customer" },
-    { key: "window", header: "Window", muted: true, width: 180 },
-    { key: "truck", header: "Truck", muted: true, width: 150 },
-    { key: "total", header: "Total", numeric: true, align: "right", width: 110 },
+    { key: "stage", header: "Stage", width: tight ? 110 : 130 },
+    { key: "number", header: "Order", mono: true, width: tight ? 125 : 140 },
+    { key: "customer", header: "Customer", width: tight ? 135 : 180 },
+    { key: "goods", header: "Goods", width: tight ? 200 : undefined },
+    { key: "notes", header: "Notes", width: tight ? 150 : 200 },
+    { key: "window", header: "Window", muted: true, width: tight ? 125 : 150 },
+    ...(tight ? [] : [{ key: "truck", header: "Truck", muted: true, width: 120 }]),
+    { key: "total", header: "Total", numeric: true, align: "right", width: 105 },
   ];
   const boardRows = lanes.flatMap((lane) =>
-    lane.cards.map((c) => ({
-      _order: c,
-      stage: lane.title,
-      number: c.order_number,
-      customer: customerOf(c)?.name || c.walk_in_name || "Walk-in",
-      window: `${shortDate(c.delivery_date)} · ${c.delivery_window || ""}`,
-      truck: truckLabel(c.truck_id) || "Unassigned",
-      total: AUD(totalOf(c)),
-    }))
+    lane.cards.map((c) => {
+      const items = orderItems[c.id] || [];
+      const cls = classOf(c);
+      return {
+        _order: c,
+        stage: lane.title,
+        number: c.order_number,
+        customer: (
+          <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <span style={{ width: 3, alignSelf: "stretch", minHeight: 14, borderRadius: 2, flexShrink: 0, background: CLASS_STYLE[cls].colour }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {customerOf(c)?.name || c.walk_in_name || "Walk-in"}
+            </span>
+          </span>
+        ),
+        goods: <GoodsCell text={itemsText(items, productById)} count={items.length} />,
+        notes: <NotesCell delivery={c.delivery_notes} order={c.order_notes} />,
+        window: `${shortDate(c.delivery_date)} · ${c.delivery_window || ""}`,
+        truck: truckLabel(c.truck_id) || "Unassigned",
+        total: AUD(totalOf(c)),
+      };
+    })
+  );
+
+  /* Dispatch works accounts first, then trade — a card's colour is who it is
+     for, which is the thing the column cannot tell you. */
+  const legend = (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      {(["account", "trade", "residential"] as const).map((k) => (
+        <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-faint)" }}>
+          <span style={{ width: 9, height: 3, borderRadius: 2, background: CLASS_STYLE[k].colour }} />
+          {CLASS_STYLE[k].label}
+        </span>
+      ))}
+    </div>
   );
 
   return (
@@ -165,7 +221,7 @@ export default function Board() {
           <Input
             size="sm"
             icon="search"
-            placeholder="Order no, customer, PO, phone"
+            placeholder="Order no, customer, address, PO, phone"
             value={query}
             onChange={(e: any) => setQuery(e.target.value)}
           />
@@ -178,6 +234,7 @@ export default function Board() {
           onChange={() => {}}
           style={{ width: 240, flexShrink: 0 }}
         />
+        {legend}
         <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "var(--text-muted)", marginLeft: "auto" }}>
           <span>
             <span className="tabular" style={{ color: "var(--text-primary)", fontWeight: 600 }}>
@@ -213,7 +270,14 @@ export default function Board() {
                     setAssignDriver(moved.driver_id || "");
                   }
                 }}
-                style={{ flex: "1 1 320px", minWidth: 320, maxWidth: 420, display: "flex", flexDirection: "column", minHeight: 0 }}
+                style={{
+                  flex: tight ? "1 1 265px" : "1 1 320px",
+                  minWidth: tight ? 265 : 320,
+                  maxWidth: 420,
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
+                }}
               >
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "0 4px 8px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
@@ -289,22 +353,47 @@ export default function Board() {
                       ? siblings.reduce((s, x) => s + totalOf(x), 0) +
                         goodsOf(orderItems[master.id] || [])
                       : 0;
+                    const cls = classOf(o);
+                    const rail = CLASS_STYLE[cls].colour;
+                    const unconfirmed = o.status === "requested";
                     return (
                       <div
                         key={o.id}
                         draggable
                         onDragStart={() => setDragging({ id: o.id, from: lane.id })}
                         onDragEnd={() => setDragging(null)}
+                        title={`${CLASS_STYLE[cls].label} customer`}
                         style={{
                           cursor: "grab",
                           opacity: dragging && dragging.id === o.id ? 0.35 : 1,
                           borderRadius: 10,
-                          padding: isSplit ? "8px 0 0" : 0,
+                          /* The colour is who the order is for. The lane already
+                             says what stage it is at, so the one thing a column
+                             cannot tell you is the one the card is coloured by:
+                             accounts go out first, then trade. */
+                          borderLeft: `3px solid ${rail}`,
+                          paddingLeft: 5,
+                          padding: isSplit ? "8px 0 0 5px" : "0 0 0 5px",
                           background: isSplit ? "var(--om-split-bg)" : "transparent",
                           borderTop: `1px solid ${isSplit ? "var(--om-split-border)" : "transparent"}`,
                           borderBottom: `1px solid ${isSplit ? "var(--om-split-border)" : "transparent"}`,
                         }}
                       >
+                        {unconfirmed && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 5,
+                              padding: "0 10px 6px",
+                              fontSize: 11,
+                              color: "var(--attention)",
+                            }}
+                          >
+                            <Icon name="circle-alert" size={11} />
+                            Raised by the customer — not confirmed yet
+                          </div>
+                        )}
                         {isSplit && master && (
                           <div
                             onClick={(e) => {
@@ -419,7 +508,7 @@ export default function Board() {
               <Select
                 size="md"
                 label="Driver"
-                options={team.filter((t) => t.role === "driver").map((t) => ({ value: t.id, label: t.name }))}
+                options={crewOptions}
                 value={assignDriver}
                 onChange={(e: any) => setAssignDriver(e.target.value)}
                 allowUnset
