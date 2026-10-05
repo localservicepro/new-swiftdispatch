@@ -513,8 +513,19 @@ export function printReceipt(id: string, mode: PrintMode = "separate") {
   }
 
   printDocument(invoiceDocument(invoiceTitle(order), sheets));
-  (splits.length ? splits : [order]).forEach((o) => markProcessed(o.id));
-  if (splits.length) markProcessed(order.id);
+  /* Printing an invoice does not print a run sheet, and does not claim one went
+     out either.
+
+     This used to call markProcessed on every order to stamp processed_at. That
+     was harmless while markProcessed only wrote a date, but it now prints the
+     run sheet as well — so asking for a tax invoice put a second job in the
+     print queue, one per delivery plus one for the master.
+
+     Nothing replaces the stamp here, because processed_at means the run sheet
+     has gone out: it is what the drawer's "run sheet already printed" warning
+     and the printer mark on a board card both read. An invoice is a different
+     piece of paper for a different person, and saying otherwise sent the yard
+     looking for a sheet nobody had printed. */
 }
 
 /* ---------- statements ---------- */

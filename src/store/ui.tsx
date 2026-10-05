@@ -50,6 +50,10 @@ interface UiState {
   adjustType: "Percent" | "Dollars";
   adjustDirection: "discount" | "surcharge";
   settleMethod: string | null;
+  /* Whether the settlement method above was filled in by the app rather than
+     chosen by hand. An automatic answer is the app's to withdraw when the
+     customer changes; one somebody typed is theirs and is left alone. */
+  settleMethodAuto: boolean;
   poNumber: string;
   orderNotesDraft: string;
   deliveryNotesDraft: string;
@@ -98,6 +102,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     adjustType: "Percent" as "Percent" | "Dollars",
     adjustDirection: "discount" as "discount" | "surcharge",
     settleMethod: null as string | null,
+    settleMethodAuto: false,
     poNumber: "",
     orderNotesDraft: "",
     deliveryNotesDraft: "",
@@ -143,6 +148,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           customerId: customerId ?? null,
           orderContact: null,
           settleMethod: customerId ? s.settleMethod : null,
+          settleMethodAuto: customerId ? s.settleMethodAuto : false,
         })),
       /* Switching to the counter keeps whatever is already on the order.
          Half-written orders do turn into counter sales — the customer rings,

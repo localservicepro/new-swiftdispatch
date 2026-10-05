@@ -227,9 +227,18 @@ export default function NewOrder() {
       orderContact: ordersContact?.id || null,
       /* An account customer settles on account — there is no other way they
          ever settle, and leaving the field blank meant someone had to pick the
-         only possible answer on every order. Anything already chosen by hand is
-         left alone. */
-      settleMethod: c.billing === "account" ? "on_account" : ui.settleMethod,
+         only possible answer on every order.
+
+         The answer has to be withdrawn again when the customer changes, which
+         is what it failed to do: pick an account customer, change your mind,
+         pick a prepaid one, and the order still said On Account. So the app
+         only overwrites what the app itself filled in. A method somebody chose
+         by hand survives either way. */
+      ...(c.billing === "account"
+        ? { settleMethod: "on_account", settleMethodAuto: true }
+        : ui.settleMethodAuto
+          ? { settleMethod: null, settleMethodAuto: false }
+          : {}),
       drafts: drafts.map((d, i) =>
         i === 0
           ? { ...d, street: site?.street || "", suburbId: site?.suburb_id || null, fee: r?.fee || 0, feeSource: "suburb" }
@@ -377,6 +386,7 @@ export default function NewOrder() {
         orderNotesDraft: "",
         deliveryNotesDraft: "",
         settleMethod: null,
+        settleMethodAuto: false,
         yardCustomer: false,
         yardWalkInName: "",
         /* The next order is for the next customer. Carrying the last one over
@@ -887,7 +897,22 @@ export default function NewOrder() {
                                   divisible={unitFor(p).divisible}
                                   onCommit={(n) => setProductQty(p.id, n)}
                                 />
-                                <Button variant="outline" size="sm" iconLeft="plus" onClick={() => addProduct(p.id)} />
+                                {/* Moves by the unit's own step, the same as the
+                                    minus beside it. It used to call addProduct,
+                                    which falls back to whatever amount is sitting
+                                    in the search box — so after typing 3.5*Wbs
+                                    every press added another 3.5 while minus took
+                                    off 0.25. Tapping the card still uses the
+                                    typed amount; that is what it is for. */}
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  iconLeft="plus"
+                                  onClick={() => {
+                                    const idx = cart.findIndex((l) => l.productId === p.id && l.to === activeDraft);
+                                    if (idx >= 0) bumpLine(idx, 1);
+                                  }}
+                                />
                               </div>
                             ) : (
                               <div style={{ fontSize: 11, color: "var(--text-faint)", paddingTop: 2 }}>
@@ -1401,7 +1426,7 @@ export default function NewOrder() {
                         label="Settlement method"
                         options={PAYMENT_METHODS}
                         value={ui.settleMethod || ""}
-                        onChange={(e: any) => ui.set({ settleMethod: e.target.value || null })}
+                        onChange={(e: any) => ui.set({ settleMethod: e.target.value || null, settleMethodAuto: false })}
                         allowUnset
                         required
                       />
