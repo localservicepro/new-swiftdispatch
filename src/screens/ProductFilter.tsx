@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
 import { Icon, Input } from "../design-system/components.js";
+import AnchoredPopover from "./AnchoredPopover";
 
 /* Narrowing a report to one product.
 
@@ -31,21 +32,18 @@ export default function ProductFilter({
   const q = query.trim().toLowerCase();
   const matches = useMemo(() => {
     if (!q) return products.slice(0, SHOWN);
-    const hits = products.filter((p) => (p.name + " " + p.sku).toLowerCase().includes(q));
-    hits.sort((a, b) => Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)));
+    const hits = products.filter((p) =>
+      (p.name + " " + p.sku).toLowerCase().includes(q),
+    );
+    hits.sort(
+      (a, b) =>
+        Number(b.name.toLowerCase().startsWith(q)) -
+        Number(a.name.toLowerCase().startsWith(q)),
+    );
     return hits.slice(0, SHOWN);
   }, [products, q]);
 
   useEffect(() => setCursor(0), [q]);
-
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
-  }, [open]);
 
   if (chosen)
     return (
@@ -99,53 +97,46 @@ export default function ProductFilter({
     );
 
   return (
-    <div ref={boxRef} style={{ position: "relative" }}>
-      <Input
-        size="sm"
-        icon="package"
-        placeholder={placeholder}
-        value={query}
-        onFocus={() => setOpen(true)}
-        onKeyDown={(e: any) => {
-          if (e.key === "Escape") return setOpen(false);
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setOpen(true);
-            setCursor((n: number) => Math.min(matches.length - 1, n + 1));
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setCursor((n: number) => Math.max(0, n - 1));
-          } else if (e.key === "Enter") {
-            e.preventDefault();
-            const hit = matches[cursor];
-            if (hit) {
-              onChange(hit.id);
-              setOpen(false);
+    <div style={{ position: "relative" }}>
+      <div ref={boxRef}>
+        <Input
+          size="sm"
+          icon="package"
+          placeholder={placeholder}
+          value={query}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e: any) => {
+            if (e.key === "Escape") return setOpen(false);
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setOpen(true);
+              setCursor((n: number) => Math.min(matches.length - 1, n + 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setCursor((n: number) => Math.max(0, n - 1));
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const hit = matches[cursor];
+              if (hit) {
+                onChange(hit.id);
+                setOpen(false);
+              }
             }
-          }
-        }}
-        onChange={(e: any) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-      />
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            zIndex: 6,
-            top: "100%",
-            left: 0,
-            right: 0,
-            marginTop: 4,
-            maxHeight: 280,
-            overflowY: "auto",
-            borderRadius: 8,
-            border: "1px solid var(--border-default)",
-            background: "var(--surface-card)",
-            boxShadow: "0 12px 32px rgba(0,0,0,.4)",
           }}
-        >
+          onChange={(e: any) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+        />
+      </div>
+      <AnchoredPopover
+        anchorRef={boxRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        maxHeight={300}
+        role="listbox"
+      >
+        <>
           {matches.map((p, i) => (
             <div
               key={p.id}
@@ -160,26 +151,45 @@ export default function ProductFilter({
                 alignItems: "center",
                 gap: 8,
                 padding: "7px 10px",
-                background: i === cursor ? "var(--surface-active)" : "transparent",
+                background:
+                  i === cursor ? "var(--surface-active)" : "transparent",
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div
+                  style={{
+                    fontSize: 12.5,
+                    color: "var(--text-primary)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {p.name}
                 </div>
-                <div className="tabular" style={{ fontSize: 11, color: "var(--text-faint)" }}>
+                <div
+                  className="tabular"
+                  style={{ fontSize: 11, color: "var(--text-faint)" }}
+                >
                   {p.sku} · sold by the {p.unit}
                 </div>
               </div>
             </div>
           ))}
           {matches.length === 0 && (
-            <div style={{ padding: "14px 10px", fontSize: 12, color: "var(--text-faint)", textAlign: "center" }}>
+            <div
+              style={{
+                padding: "14px 10px",
+                fontSize: 12,
+                color: "var(--text-faint)",
+                textAlign: "center",
+              }}
+            >
               Nothing in the catalogue matches "{query.trim()}".
             </div>
           )}
-        </div>
-      )}
+        </>
+      </AnchoredPopover>
     </div>
   );
 }

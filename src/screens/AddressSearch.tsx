@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Icon } from "../design-system/components.js";
+import AnchoredPopover from "./AnchoredPopover";
 import { fetchPlace, fetchSuggestions, hasPlacesKey, mapsSearchUrl, type PlaceSuggestion } from "../lib/googleMaps";
 import type { Suburb } from "../lib/types";
 
@@ -33,6 +34,9 @@ export default function AddressSearch({
   const [active, setActive] = useState(-1);
   const [note, setNote] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  /* The suggestions hang off the input, not off the whole block — there is a
+     label above it and a note below. */
+  const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<number>();
   const abortRef = useRef<AbortController | null>(null);
   const pickedRef = useRef(false);
@@ -99,15 +103,6 @@ export default function AddressSearch({
     }
   };
 
-  /* Close when clicking anywhere else. */
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, []);
-
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (!open || !items.length) return;
     if (e.key === "ArrowDown") {
@@ -142,6 +137,7 @@ export default function AddressSearch({
         </a>
       </div>
       <input
+        ref={inputRef}
         value={street}
         onChange={(e) => queryChanged(e.target.value)}
         onFocus={() => {
@@ -167,24 +163,14 @@ export default function AddressSearch({
         }}
       />
 
-      {open && items.length > 0 && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            right: 0,
-            zIndex: 30,
-            marginTop: 4,
-            padding: "4px 0",
-            borderRadius: 8,
-            background: "var(--surface-card)",
-            border: "1px solid var(--border-default)",
-            boxShadow: "var(--om-overlay-shadow)",
-            maxHeight: 280,
-            overflowY: "auto",
-          }}
-        >
+      <AnchoredPopover
+        anchorRef={inputRef}
+        open={open && items.length > 0}
+        onClose={() => setOpen(false)}
+        maxHeight={300}
+        role="listbox"
+      >
+        <div style={{ padding: "4px 0" }}>
           {items.map((s, i) => (
             <div
               key={s.placeId}
@@ -216,7 +202,7 @@ export default function AddressSearch({
             powered by Google
           </div>
         </div>
-      )}
+      </AnchoredPopover>
 
       {note && (
         <div style={{ fontSize: 11, color: note.tone === "ok" ? "var(--feedback-success)" : "var(--feedback-warning)", textWrap: "pretty" as any }}>

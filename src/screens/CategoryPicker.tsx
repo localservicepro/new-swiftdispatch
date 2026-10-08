@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Icon, Input } from "../design-system/components.js";
 import AppIcon from "./AppIcon";
+import AnchoredPopover from "./AnchoredPopover";
 
 /* Forty-nine categories as chips filled eight rows and pushed the products off
    the screen — on the one page where the products are the whole point.
@@ -44,6 +45,9 @@ export default function CategoryPicker({
   const [open, setOpen] = useState(false);
   const [find, setFind] = useState("");
   const wrap = useRef<HTMLDivElement>(null);
+  /* The list hangs off the More chip, not off the whole row — the row wraps
+     and is as wide as the screen. */
+  const moreRef = useRef<HTMLDivElement>(null);
 
   const ranked = useMemo(
     () =>
@@ -61,19 +65,6 @@ export default function CategoryPicker({
 
   const hidden = ranked.filter((c) => !shown.includes(c.name));
 
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false);
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", esc);
-    };
-  }, [open]);
 
   useEffect(() => {
     if (!open) setFind("");
@@ -84,8 +75,15 @@ export default function CategoryPicker({
      "bulk" wants the answer whether or not it happens to be in the row. */
   const matches = (q ? ranked.filter((c) => c.name.toLowerCase().includes(q)) : hidden).slice(0, 60);
 
-  const chip = (label: string, on: boolean, onClick: () => void, extra?: React.ReactNode) => (
+  const chip = (
+    label: string,
+    on: boolean,
+    onClick: () => void,
+    extra?: React.ReactNode,
+    ref?: React.Ref<HTMLDivElement>
+  ) => (
     <div
+      ref={ref}
       key={label}
       onClick={onClick}
       title={label}
@@ -123,26 +121,12 @@ export default function CategoryPicker({
               {hidden.length}
             </span>
             <AppIcon name={open ? "chevron-up" : "chevron-down"} size={12} color="var(--text-faint)" />
-          </>
+          </>,
+          moreRef
         )}
 
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            left: 0,
-            zIndex: 20,
-            width: "min(420px, 100%)",
-            maxHeight: 320,
-            display: "flex",
-            flexDirection: "column",
-            borderRadius: 10,
-            background: "var(--surface-card)",
-            border: "1px solid var(--border-default)",
-            boxShadow: "0 18px 44px rgba(0,0,0,.5)",
-          }}
-        >
+      <AnchoredPopover anchorRef={moreRef} open={open} onClose={() => setOpen(false)} maxHeight={340} minWidth={340}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ padding: 8, borderBottom: "1px solid var(--border-subtle)" }}>
             <Input
               size="sm"
@@ -186,7 +170,7 @@ export default function CategoryPicker({
             )}
           </div>
         </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

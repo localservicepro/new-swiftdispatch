@@ -3,6 +3,7 @@ import { useApp } from "../store/store";
 import { AUD, unitPrice } from "../lib/domain";
 import type { Product } from "../lib/types";
 import { Icon, Input } from "../design-system/components.js";
+import AnchoredPopover from "./AnchoredPopover";
 
 /* Adding a product to an order that already exists.
 
@@ -36,24 +37,20 @@ export default function ProductSearchAdd({
   const matches = useMemo(() => {
     const live = products.filter((p) => p.active);
     if (!q) return live.slice(0, SHOWN);
-    const hits = live.filter((p) => (p.name + " " + p.sku).toLowerCase().includes(q));
+    const hits = live.filter((p) =>
+      (p.name + " " + p.sku).toLowerCase().includes(q),
+    );
     /* A product whose name starts with what was typed is almost always the one
        meant — "cement" should not open on "Cement Australia Off White". */
-    hits.sort((a, b) => Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)));
+    hits.sort(
+      (a, b) =>
+        Number(b.name.toLowerCase().startsWith(q)) -
+        Number(a.name.toLowerCase().startsWith(q)),
+    );
     return hits.slice(0, SHOWN);
   }, [products, q]);
 
   useEffect(() => setCursor(0), [q]);
-
-  /* Clicking anywhere else closes it. */
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
-  }, [open]);
 
   const choose = (p: Product) => {
     onAdd(p.id);
@@ -80,37 +77,36 @@ export default function ProductSearchAdd({
   };
 
   return (
-    <div ref={boxRef} style={{ position: "relative", paddingTop: 4 }}>
-      {label && <div style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}>{label}</div>}
-      <Input
-        size="sm"
-        icon="search"
-        placeholder={placeholder}
-        value={query}
-        onFocus={() => setOpen(true)}
-        onKeyDown={onKeyDown}
-        onChange={(e: any) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-      />
-      {open && (
+    <div style={{ position: "relative", paddingTop: 4 }}>
+      {label && (
         <div
-          style={{
-            position: "absolute",
-            zIndex: 5,
-            top: "100%",
-            left: 0,
-            right: 0,
-            marginTop: 4,
-            maxHeight: 280,
-            overflowY: "auto",
-            borderRadius: 8,
-            border: "1px solid var(--border-default)",
-            background: "var(--surface-card)",
-            boxShadow: "0 12px 32px rgba(0,0,0,.4)",
-          }}
+          style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 4 }}
         >
+          {label}
+        </div>
+      )}
+      <div ref={boxRef}>
+        <Input
+          size="sm"
+          icon="search"
+          placeholder={placeholder}
+          value={query}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          onChange={(e: any) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+        />
+      </div>
+      <AnchoredPopover
+        anchorRef={boxRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        maxHeight={300}
+        role="listbox"
+      >
+        <>
           {matches.map((p, i) => {
             const eff = unitPrice(p, specials, () => null);
             const on = i === cursor;
@@ -141,28 +137,53 @@ export default function ProductSearchAdd({
                   >
                     {p.name}
                   </div>
-                  <div className="tabular" style={{ fontSize: 11, color: "var(--text-faint)" }}>
+                  <div
+                    className="tabular"
+                    style={{ fontSize: 11, color: "var(--text-faint)" }}
+                  >
                     {p.sku}
                   </div>
                 </div>
-                <span className="tabular" style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
+                <span
+                  className="tabular"
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-muted)",
+                    flexShrink: 0,
+                  }}
+                >
                   {AUD(eff)} / {p.unit}
                 </span>
               </div>
             );
           })}
           {matches.length === 0 && (
-            <div style={{ padding: "14px 10px", fontSize: 12, color: "var(--text-faint)", textAlign: "center" }}>
+            <div
+              style={{
+                padding: "14px 10px",
+                fontSize: 12,
+                color: "var(--text-faint)",
+                textAlign: "center",
+              }}
+            >
               Nothing in the catalogue matches "{query.trim()}".
             </div>
           )}
           {!q && products.filter((p) => p.active).length > SHOWN && (
-            <div style={{ padding: "7px 10px", fontSize: 11, color: "var(--text-faint)", borderTop: "1px solid var(--border-subtle)" }}>
-              Showing {SHOWN} of {products.filter((p) => p.active).length} — type to narrow it down.
+            <div
+              style={{
+                padding: "7px 10px",
+                fontSize: 11,
+                color: "var(--text-faint)",
+                borderTop: "1px solid var(--border-subtle)",
+              }}
+            >
+              Showing {SHOWN} of {products.filter((p) => p.active).length} —
+              type to narrow it down.
             </div>
           )}
-        </div>
-      )}
+        </>
+      </AnchoredPopover>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useApp } from "../store/store";
 import { customerBadgeType, CLASS_STYLE } from "../lib/domain";
 import type { Customer } from "../lib/types";
 import { Icon, Input } from "../design-system/components.js";
+import AnchoredPopover from "./AnchoredPopover";
 
 /* Choosing a customer on an order.
 
@@ -39,42 +40,53 @@ export default function CustomerPicker({
   const [cursor, setCursor] = useState(0);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
-  const suburbName = (id: string | null | undefined) => suburbs.find((s) => s.id === id)?.name || "";
+  const suburbName = (id: string | null | undefined) =>
+    suburbs.find((s) => s.id === id)?.name || "";
 
   /* An archived customer is out of the book but still on their old orders.
      They must not be choosable for a new one. */
-  const live = useMemo(() => customers.filter((c) => !c.archived_at), [customers]);
+  const live = useMemo(
+    () => customers.filter((c) => !c.archived_at),
+    [customers],
+  );
 
   const q = query.trim().toLowerCase();
   const matches = useMemo(() => {
     if (!q) return live.slice(0, SHOWN);
     const hits = live.filter((c) =>
-      (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
+      (
+        c.name +
+        " " +
+        c.account_number +
+        " " +
+        c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" ")
+      )
         .toLowerCase()
-        .includes(q)
+        .includes(q),
     );
-    hits.sort((a, b) => Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)));
+    hits.sort(
+      (a, b) =>
+        Number(b.name.toLowerCase().startsWith(q)) -
+        Number(a.name.toLowerCase().startsWith(q)),
+    );
     return hits.slice(0, SHOWN);
   }, [live, q]);
 
   const total = q
     ? live.filter((c) =>
-        (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
+        (
+          c.name +
+          " " +
+          c.account_number +
+          " " +
+          c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" ")
+        )
           .toLowerCase()
-          .includes(q)
+          .includes(q),
       ).length
     : live.length;
 
   useEffect(() => setCursor(0), [q]);
-
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
-  }, [open]);
 
   const choose = (c: Customer) => {
     onPick(c.id);
@@ -100,9 +112,11 @@ export default function CustomerPicker({
   };
 
   return (
-    <div ref={boxRef} style={{ position: "relative" }}>
+    <div style={{ position: "relative" }}>
       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        {/* The anchor is the search field itself, not the row — the list lines
+            up under what you are typing into, not under the New button too. */}
+        <div ref={boxRef} style={{ flex: 1, minWidth: 0 }}>
           <Input
             size="sm"
             icon="search"
@@ -142,23 +156,14 @@ export default function CustomerPicker({
         )}
       </div>
 
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            zIndex: 6,
-            top: "100%",
-            left: 0,
-            right: 0,
-            marginTop: 4,
-            maxHeight: 320,
-            overflowY: "auto",
-            borderRadius: 8,
-            border: "1px solid var(--border-default)",
-            background: "var(--surface-card)",
-            boxShadow: "0 12px 32px rgba(0,0,0,.4)",
-          }}
-        >
+      <AnchoredPopover
+        anchorRef={boxRef}
+        open={open}
+        onClose={() => setOpen(false)}
+        maxHeight={340}
+        role="listbox"
+      >
+        <>
           {matches.map((c, i) => {
             const on = i === cursor;
             const cls = customerBadgeType(c);
@@ -174,12 +179,30 @@ export default function CustomerPicker({
                   alignItems: "center",
                   gap: 9,
                   padding: "8px 10px",
-                  background: on ? "var(--surface-active)" : c.id === value ? "var(--om-chip-active-bg)" : "transparent",
+                  background: on
+                    ? "var(--surface-active)"
+                    : c.id === value
+                      ? "var(--om-chip-active-bg)"
+                      : "transparent",
                 }}
               >
-                <span style={{ width: 3, alignSelf: "stretch", borderRadius: 2, flexShrink: 0, background: CLASS_STYLE[cls].colour }} />
+                <span
+                  style={{
+                    width: 3,
+                    alignSelf: "stretch",
+                    borderRadius: 2,
+                    flexShrink: 0,
+                    background: CLASS_STYLE[cls].colour,
+                  }}
+                />
                 <Icon
-                  name={c.entity === "Company" ? "building-2" : c.entity === "Sole trader" ? "wrench" : "user"}
+                  name={
+                    c.entity === "Company"
+                      ? "building-2"
+                      : c.entity === "Sole trader"
+                        ? "wrench"
+                        : "user"
+                  }
                   size={13}
                   color="var(--text-faint)"
                 />
@@ -196,34 +219,74 @@ export default function CustomerPicker({
                   >
                     {c.name}
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    Acct {c.account_number} · {c.billing === "account" ? `${c.terms_days}-day account` : "prepaid"} ·{" "}
-                    {c.tier}
-                    {site ? ` · ${suburbName(site.suburb_id) || site.street}` : ""}
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-faint)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Acct {c.account_number} ·{" "}
+                    {c.billing === "account"
+                      ? `${c.terms_days}-day account`
+                      : "prepaid"}{" "}
+                    · {c.tier}
+                    {site
+                      ? ` · ${suburbName(site.suburb_id) || site.street}`
+                      : ""}
                   </div>
                 </div>
-                {c.stop_credit && <Icon name="octagon-alert" size={13} color="var(--attention)" title="On stop credit" />}
-                {c.id === value && <Icon name="check" size={13} color="var(--brand-primary)" />}
+                {c.stop_credit && (
+                  <Icon
+                    name="octagon-alert"
+                    size={13}
+                    color="var(--attention)"
+                    title="On stop credit"
+                  />
+                )}
+                {c.id === value && (
+                  <Icon name="check" size={13} color="var(--brand-primary)" />
+                )}
               </div>
             );
           })}
           {matches.length === 0 && (
             <div style={{ padding: "16px 12px", textAlign: "center" }}>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Nobody on file matches "{query.trim()}".</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                Nobody on file matches "{query.trim()}".
+              </div>
               {onAddNew && (
-                <div onClick={onAddNew} style={{ cursor: "pointer", fontSize: 12, marginTop: 6, color: "var(--brand-primary)" }}>
+                <div
+                  onClick={onAddNew}
+                  style={{
+                    cursor: "pointer",
+                    fontSize: 12,
+                    marginTop: 6,
+                    color: "var(--brand-primary)",
+                  }}
+                >
                   Add them as a new customer
                 </div>
               )}
             </div>
           )}
           {matches.length > 0 && total > matches.length && (
-            <div style={{ padding: "7px 10px", fontSize: 11, color: "var(--text-faint)", borderTop: "1px solid var(--border-subtle)" }}>
-              Showing {matches.length} of {total.toLocaleString()} — keep typing to narrow it down.
+            <div
+              style={{
+                padding: "7px 10px",
+                fontSize: 11,
+                color: "var(--text-faint)",
+                borderTop: "1px solid var(--border-subtle)",
+              }}
+            >
+              Showing {matches.length} of {total.toLocaleString()} — keep typing
+              to narrow it down.
             </div>
           )}
-        </div>
-      )}
+        </>
+      </AnchoredPopover>
     </div>
   );
 }
