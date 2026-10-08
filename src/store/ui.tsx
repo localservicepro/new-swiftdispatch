@@ -6,6 +6,15 @@ import React, { createContext, useContext, useMemo, useState } from "react";
 import { blankDraft, useApp, type CartLine, type DeliveryDraft } from "./store";
 import type { OrderStatus } from "../lib/types";
 
+/* Raised after an order is created so the tax invoice can be printed with its
+   real number on it. Lives here, not in the new-order screen, because a
+   standard order navigates to the board the moment it is created. */
+export interface PrintPrompt {
+  orderId: string;
+  orderNumber: string;
+  splits: number;
+}
+
 export interface PickerState {
   kind: "date" | "window";
   current?: string;
@@ -38,15 +47,20 @@ interface UiState {
   yardWalkInName: string;
   orderContact: string | null;
   fulfilMethod: "delivery" | "pickup";
-  qtyStep: number;
   adjustType: "Percent" | "Dollars";
+  adjustDirection: "discount" | "surcharge";
   settleMethod: string | null;
+  /* Whether the settlement method above was filled in by the app rather than
+     chosen by hand. An automatic answer is the app's to withdraw when the
+     customer changes; one somebody typed is theirs and is left alone. */
+  settleMethodAuto: boolean;
   poNumber: string;
   orderNotesDraft: string;
   deliveryNotesDraft: string;
   savedDraft: SavedDraft | null;
 
   // pickers & drawers
+  printPrompt: PrintPrompt | null;
   picker: PickerState | null;
   drawerOpen: boolean;
   selectedOrderId: string | null; // null while drawer open = master group view
@@ -85,13 +99,15 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     yardWalkInName: "",
     orderContact: null as string | null,
     fulfilMethod: "delivery" as "delivery" | "pickup",
-    qtyStep: 1,
     adjustType: "Percent" as "Percent" | "Dollars",
+    adjustDirection: "discount" as "discount" | "surcharge",
     settleMethod: null as string | null,
+    settleMethodAuto: false,
     poNumber: "",
     orderNotesDraft: "",
     deliveryNotesDraft: "",
     savedDraft: readSavedDraft(),
+    printPrompt: null as PrintPrompt | null,
     picker: null as PickerState | null,
     drawerOpen: false,
     selectedOrderId: null as string | null,
@@ -116,6 +132,11 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           return { ...s, pendingNav: id };
         });
       },
+      /* Starting an order starts it empty. It used to keep whoever the last
+         order was for, which reads as a convenience and is not one: the same
+         customer rarely orders twice in a row, the name sits in a corner of the
+         screen where nobody rereads it, and the result was goods billed to the
+         wrong account. Customers › New order still passes one in deliberately. */
       startOrder: (customerId) =>
         setState((s) => ({
           ...s,
@@ -124,19 +145,25 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           orderMode: "standard",
           drawerOpen: false,
           custId: null,
-          customerId: customerId !== undefined ? customerId : s.customerId,
+          customerId: customerId ?? null,
+          orderContact: null,
+          settleMethod: customerId ? s.settleMethod : null,
+          settleMethodAuto: customerId ? s.settleMethodAuto : false,
         })),
+      /* Switching to the counter keeps whatever is already on the order.
+         Half-written orders do turn into counter sales — the customer rings,
+         then turns up — and this used to empty the cart without asking, while
+         the New order button beside it kept everything. A customer already
+         chosen comes across as the account the sale goes on. */
       startYardSale: () =>
         setState((s) => ({
           ...s,
           nav: "neworder",
           orderStep: 1,
           orderMode: "yardsale",
-          cart: [],
           drawerOpen: false,
-          yardCustomer: false,
-          yardWalkInName: "",
-          orderContact: null,
+          yardCustomer: !!s.customerId,
+          yardWalkInName: s.yardWalkInName,
         })),
       discardOrder: () =>
         setState((s) => ({

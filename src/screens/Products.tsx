@@ -1,9 +1,24 @@
 import React, { useState } from "react";
+import { applyProductImport, exportProductsCsv, planProductImport, type ProductImportPlan } from "../data/productIo";
+import ImportPreview, { type PreviewRow } from "./ImportPreview";
+import ProductCard, { CatalogueBadges, StockLine } from "./ProductCard";
+import { ACCEPT, deleteProductImage, rejectReason, uploadProductImage } from "../data/productImages";
+
+const PRODUCT_ACTION: Record<string, string> = {
+  create: "New",
+  update: "Update",
+  "create-variant": "+ Variant",
+  "update-variant": "Variant",
+  reject: "Skip",
+};
 import { useApp } from "../store/store";
 import { AUD, qtyText, soldIn, unitFor, unitOf, unitPrice, UNITS, dmy } from "../lib/domain";
 import type { Product, ProductUnit } from "../lib/types";
 import { addCategory, createSpecial, deleteProduct, removeCategory, removeSpecial, renameCategory, toggleSpecial, upsertProduct } from "../data/api";
 import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, Icon, Input, Select, Switch, Tabs, Textarea } from "../design-system/components.js";
+
+/* Cards drawn before "Show more". */
+const CARD_PAGE = 48;
 
 const BLANK_FORM = {
   open: false,
@@ -17,6 +32,14 @@ const BLANK_FORM = {
   stock: "",
   fractional: true,
   kind: "single" as "single" | "variable",
+  imageUrl: "",
+  trackStock: false,
+  /* What the form has done to the photograph, settled only on Save or Cancel:
+     the picture this edit displaced, and the one it uploaded. Whichever the
+     product does not end up wearing gets deleted, so an abandoned edit leaves
+     no orphan in the bucket and no missing file on a product. */
+  imageRemoved: "",
+  imageAdded: "",
   variants: [] as { name: string; sku: string; price: string; stock: string }[],
 };
 
@@ -24,9 +47,18 @@ export default function Products() {
   const app = useApp();
   const { products, categories, specials } = app;
   const [tab, setTab] = useState<"catalogue" | "categories" | "specials">("catalogue");
+  const [view, setView] = useState<"cards" | "table">("cards");
   const [query, setQuery] = useState("");
   const [catFilter, setCatFilter] = useState("All categories");
+  /* Nine hundred cards, each with a photograph, is not something to mount at
+     once. A screenful at a time, same as the other long lists in here. */
+  const [shownCards, setShownCards] = useState(CARD_PAGE);
+  const [uploading, setUploading] = useState(false);
+  const imgRef = React.useRef<HTMLInputElement>(null);
   const [csvNote, setCsvNote] = useState<{ title: string; body: string } | null>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importPlan, setImportPlan] = useState<{ plan: ProductImportPlan; file: string } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [form, setForm] = useState({ ...BLANK_FORM });
   const [newCatName, setNewCatName] = useState("");
   const [sp, setSp] = useState({ name: "", kind: "percent" as "percent" | "amount", value: "", scope: "products" as "all" | "category" | "products", categoryId: "", ids: [] as string[], from: "", to: "" });
@@ -45,7 +77,41 @@ export default function Products() {
     return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
   });
 
+  React.useEffect(() => setShownCards(CARD_PAGE), [query, catFilter, view]);
+
+  /* Opening a product for editing — shared by a card and a table row, so they
+     cannot drift apart. */
+  const edit = (p: Product) =>
+    setForm({
+      open: true,
+      mode: "edit",
+      id: p.id,
+      name: p.name,
+      sku: p.sku,
+      categoryId: p.category_id || "",
+      unit: p.unit,
+      price: String(p.price),
+      stock: String(p.stock),
+      fractional: unitFor(p).divisible,
+      kind: p.kind,
+      imageUrl: p.image_url || "",
+      trackStock: p.track_stock,
+      imageRemoved: "",
+      imageAdded: "",
+      variants: (p.variants || []).map((v) => ({ name: v.name, sku: v.sku, price: String(v.price), stock: String(v.stock) })),
+    });
+
   const setPf = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
+
+  /* Closing the form settles what happened to the photograph. Saving keeps what
+     is on screen and drops what it displaced; cancelling does the reverse and
+     drops whatever this edit uploaded. Either way the bucket ends up holding
+     exactly the files the catalogue points at. */
+  const closeForm = (saved: boolean) => {
+    const drop = saved ? form.imageRemoved : form.imageAdded;
+    if (drop && drop !== (saved ? form.imageUrl : form.imageRemoved)) void deleteProductImage(drop);
+    setForm({ ...BLANK_FORM });
+  };
   const pfUnitRes = unitFor({ unit: form.unit, fractional: form.fractional });
 
   const productsIn = (s: (typeof specials)[number]) =>
@@ -78,29 +144,37 @@ export default function Products() {
           variant="underline"
         />
         <div style={{ flex: 1 }} />
-        <Button
-          variant="ghost"
-          size="sm"
-          iconLeft="download"
-          onClick={() =>
-            setCsvNote({
-              title: "Import expects the export's own columns",
-              body: "sku, name, category, unit, fractional, price, stock, variant_of. Rows are matched on SKU — an existing SKU updates that product, a new one creates it, and nothing is deleted. A category named in the file that does not exist yet is created.",
-            })
-          }
-        >
+        <Button variant="ghost" size="sm" iconLeft="download" onClick={() => fileRef.current?.click()}>
           Import
         </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            setCsvNote(null);
+            try {
+              setImportPlan({ plan: planProductImport(await file.text()), file: file.name });
+            } catch (err) {
+              app.toast({ tone: "danger", title: "Could not read that file", description: String((err as Error).message) });
+            }
+          }}
+        />
         <Button
           variant="ghost"
           size="sm"
           iconLeft="external-link"
-          onClick={() =>
+          onClick={() => {
+            const n = exportProductsCsv();
             setCsvNote({
-              title: `Exported ${products.length} products`,
-              body: `products-${dmy(today)}.csv — columns: sku, name, category, unit, fractional, price, stock, variant_of. Variants export as their own rows so the file round-trips through Import unchanged.`,
-            })
-          }
+              title: `Exported ${n} ${n === 1 ? "row" : "rows"}`,
+              body: "Columns: sku, name, category, unit, fractional, price, stock, active, variant_of, image url. Variants export as their own rows, so the file round-trips through Import unchanged.",
+            });
+          }}
         >
           Export
         </Button>
@@ -112,6 +186,65 @@ export default function Products() {
         </Alert>
       )}
 
+      {importPlan && (
+        <ImportPreview
+          title="Import products"
+          fileName={importPlan.file}
+          busy={importing}
+          actionWidth={68}
+          confirmIcon="download"
+          tiles={[
+            { label: "New", value: importPlan.plan.creates, tone: "good" },
+            { label: "Updated", value: importPlan.plan.updates, tone: "info" },
+            { label: "Variants", value: importPlan.plan.variants, tone: "info" },
+            { label: "Skipped", value: importPlan.plan.rejects, tone: "bad" },
+          ]}
+          notes={[
+            ...(importPlan.plan.newCategories.length
+              ? [{
+                  title: `${importPlan.plan.newCategories.length} new ${importPlan.plan.newCategories.length === 1 ? "category" : "categories"} will be created`,
+                  body: importPlan.plan.newCategories.join(", "),
+                }]
+              : []),
+            ...(importPlan.plan.unknownColumns.length
+              ? [{ title: "Columns that were ignored", body: `${importPlan.plan.unknownColumns.join(", ")} — these do not match any product field, so they were left alone.` }]
+              : []),
+          ]}
+          rows={importPlan.plan.rows.map<PreviewRow>((r) => ({
+            line: r.line,
+            action: PRODUCT_ACTION[r.action],
+            tone: r.action === "reject" ? "bad" : r.action === "create" ? "good" : "info",
+            label: r.name,
+            code: r.sku || undefined,
+            trail: r.parentSku ? `→ ${r.parentSku}` : undefined,
+            reason: r.reason,
+            warnings: r.warnings,
+          }))}
+          footNote="Rows are matched on SKU. Nothing is deleted — a product left out of the file is untouched."
+          writeCount={importPlan.plan.creates + importPlan.plan.updates + importPlan.plan.variants}
+          onClose={() => setImportPlan(null)}
+          onConfirm={async () => {
+            setImporting(true);
+            const r = await applyProductImport(importPlan.plan);
+            setImporting(false);
+            setImportPlan(null);
+            if (r.failed.length) app.toast({ tone: "danger", title: "Import did not finish", description: r.failed[0] });
+            else
+              app.toast({
+                tone: "success",
+                title: `${r.created} added, ${r.updated} updated`,
+                description: [
+                  r.variants ? `${r.variants} variants` : null,
+                  r.categories ? `${r.categories} new categories` : null,
+                  importPlan.plan.rejects ? `${importPlan.plan.rejects} rows skipped` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined,
+              });
+          }}
+        />
+      )}
+
       {tab === "catalogue" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -119,6 +252,16 @@ export default function Products() {
               <Input size="sm" icon="search" value={query} onChange={(e: any) => setQuery(e.target.value)} placeholder="Product name or SKU" />
             </div>
             <Select size="sm" options={["All categories", ...categories.map((c) => c.name)]} value={catFilter} onChange={(e: any) => setCatFilter(e.target.value)} style={{ width: 180, flexShrink: 0 }} />
+            {/* The table is still the better tool for a stocktake, so it stays
+                one click away rather than being replaced outright. */}
+            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <Button variant={view === "cards" ? "outline" : "ghost"} size="sm" iconLeft="layout-dashboard" onClick={() => setView("cards")}>
+                Cards
+              </Button>
+              <Button variant={view === "table" ? "outline" : "ghost"} size="sm" iconLeft="list-filter" onClick={() => setView("table")}>
+                Table
+              </Button>
+            </div>
             <Button variant="primary" size="sm" iconLeft="plus" onClick={() => setForm({ ...BLANK_FORM, open: true, categoryId: categories[0]?.id || "", fractional: unitOf("m³").divisible })}>
               Add product
             </Button>
@@ -128,6 +271,42 @@ export default function Products() {
               ? `${products.length} products${activeSpecials.length ? ` · ${discounted} on special` : ""}`
               : `${matches.length} of ${products.length} products`}
           </div>
+          {view === "cards" ? (
+            <>
+              <div className="product-grid-wrap">
+                <div className="product-grid">
+                  {matches.slice(0, shownCards).map((p) => {
+                    const eff = priceOf(p);
+                    return (
+                      <ProductCard
+                        key={p.id}
+                        p={p}
+                        effective={eff}
+                        subtitle={catName(p.category_id)}
+                        onClick={() => edit(p)}
+                        badges={<CatalogueBadges p={p} onSpecial={eff < Number(p.price)} />}
+                        footer={<StockLine p={p} />}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+              {matches.length === 0 && (
+                <Card padding="default">
+                  <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
+                    No products match these filters.
+                  </div>
+                </Card>
+              )}
+              {matches.length > shownCards && (
+                <div style={{ display: "flex", justifyContent: "center", paddingTop: 4 }}>
+                  <Button variant="outline" size="sm" iconLeft="chevron-down" onClick={() => setShownCards((n) => n + CARD_PAGE)}>
+                    Show {Math.min(CARD_PAGE, matches.length - shownCards)} more of {matches.length}
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
           <Card padding="none">
             <div style={{ overflowX: "auto" }}>
               <DataTable
@@ -150,30 +329,17 @@ export default function Products() {
                     kind: p.kind === "variable" ? `${(p.variants || []).length} variants` : "Single",
                     sold: soldIn(p),
                     price: eff < Number(p.price) ? `${AUD(eff)} was ${AUD(Number(p.price))}` : `${AUD(Number(p.price))} / ${p.unit}`,
-                    stock: qtyText(p.kind === "variable" ? (p.variants || []).reduce((t, v) => t + Number(v.stock || 0), 0) : Number(p.stock), p.unit),
+                    stock: p.track_stock
+                      ? qtyText(p.kind === "variable" ? (p.variants || []).reduce((t, v) => t + Number(v.stock || 0), 0) : Number(p.stock), p.unit)
+                      : "—",
                   };
                 })}
                 dense
-                onRowClick={(row: any) => {
-                  const p: Product = row._p;
-                  setForm({
-                    open: true,
-                    mode: "edit",
-                    id: p.id,
-                    name: p.name,
-                    sku: p.sku,
-                    categoryId: p.category_id || "",
-                    unit: p.unit,
-                    price: String(p.price),
-                    stock: String(p.stock),
-                    fractional: unitFor(p).divisible,
-                    kind: p.kind,
-                    variants: (p.variants || []).map((v) => ({ name: v.name, sku: v.sku, price: String(v.price), stock: String(v.stock) })),
-                  });
-                }}
+                onRowClick={(row: any) => edit(row._p)}
               />
             </div>
           </Card>
+          )}
         </div>
       )}
 
@@ -396,7 +562,7 @@ export default function Products() {
 
       {/* Product add/edit modal */}
       {form.open && (
-        <div onClick={() => setForm({ ...BLANK_FORM })} style={{ position: "fixed", inset: 0, zIndex: 24, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--om-scrim)" }}>
+        <div onClick={() => closeForm(false)} style={{ position: "fixed", inset: 0, zIndex: 24, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "var(--om-scrim)" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "min(640px,100%)", maxHeight: "calc(100% - 48px)", display: "flex", flexDirection: "column", borderRadius: 16, background: "var(--surface-card)", border: "1px solid var(--border-default)", boxShadow: "var(--om-overlay-shadow)", overflow: "hidden" }}>
             <div style={{ flexShrink: 0, padding: 16, borderBottom: "1px solid var(--border-subtle)" }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>{form.mode === "edit" ? form.name || "Edit product" : "Add a product"}</div>
@@ -428,6 +594,101 @@ export default function Products() {
                 <Input size="sm" label="Product name" value={form.name} onChange={(e: any) => setPf({ name: e.target.value })} placeholder="e.g. Screened topsoil" />
                 <Input size="sm" label="SKU" value={form.sku} onChange={(e: any) => setPf({ sku: e.target.value })} placeholder={form.mode === "edit" ? "SKU" : "Left blank, one is generated"} />
               </div>
+              {/* Pick a file, not a URL. Nobody at a garden supplies yard should
+                  have to host an image somewhere else first. */}
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <div
+                  style={{
+                    position: "relative",
+                    width: 108,
+                    height: 81,
+                    flexShrink: 0,
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    background: "var(--surface-raised)",
+                    border: "1px solid var(--border-subtle)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {form.imageUrl ? (
+                    <img
+                      src={form.imageUrl}
+                      alt=""
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <Icon name="package" size={20} color="var(--text-faint)" />
+                  )}
+                  {uploading && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: "rgba(6,7,15,.7)",
+                        fontSize: 11,
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      Uploading…
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Photo</span>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <Button variant="outline" size="sm" iconLeft="inbox" disabled={uploading} onClick={() => imgRef.current?.click()}>
+                      {form.imageUrl ? "Replace photo" : "Upload photo"}
+                    </Button>
+                    {form.imageUrl && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconLeft="trash-2"
+                        disabled={uploading}
+                        onClick={() => {
+                          /* Only drops the file once the product is saved
+                             without it — clearing the field is not a decision
+                             until Save says so. */
+                          setPf({ imageUrl: "", imageRemoved: form.imageUrl });
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  <span style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                    PNG, JPG, WEBP, GIF or AVIF up to 10MB. Without one the catalogue shows a placeholder.
+                  </span>
+                  <input
+                    ref={imgRef}
+                    type="file"
+                    accept={ACCEPT}
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      const bad = rejectReason(file);
+                      if (bad) return app.toast({ tone: "danger", title: "That file cannot be used", description: bad });
+                      setUploading(true);
+                      const { url, error } = await uploadProductImage(file);
+                      setUploading(false);
+                      if (error || !url) {
+                        return app.toast({ tone: "danger", title: "The photo did not upload", description: error || "No URL came back." });
+                      }
+                      /* The photograph being replaced is remembered, not deleted
+                         — cancelling the form must leave the product as it was. */
+                      setPf({ imageUrl: url, imageRemoved: form.imageRemoved || form.imageUrl, imageAdded: url });
+                    }}
+                  />
+                </div>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
                 <Select size="sm" label="Category" options={categories.map((c) => ({ value: c.id, label: c.name }))} value={form.categoryId} onChange={(e: any) => setPf({ categoryId: e.target.value })} />
                 <Select
@@ -442,9 +703,29 @@ export default function Products() {
               {form.kind === "single" && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
                   <Input size="sm" label={`Price per ${form.unit}`} value={form.price} onChange={(e: any) => setPf({ price: e.target.value.replace(/[^0-9.]/g, "") })} suffix="AUD" placeholder="0.00" />
-                  <Input size="sm" label={`On hand (${form.unit})`} value={form.stock} onChange={(e: any) => setPf({ stock: e.target.value.replace(/[^0-9.]/g, "") })} placeholder="0" />
+                  {form.trackStock && (
+                    <Input size="sm" label={`On hand (${form.unit})`} value={form.stock} onChange={(e: any) => setPf({ stock: e.target.value.replace(/[^0-9.]/g, "") })} placeholder="0" />
+                  )}
                 </div>
               )}
+
+              {/* The catalogue arrived from an app that seeded stock rather than
+                  counting it, so every product starts untracked. Counting one
+                  for real is what turns this on. */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 11px", borderRadius: 8, background: "var(--surface-raised)", border: "1px solid var(--border-subtle)" }}>
+                <Switch
+                  checked={form.trackStock}
+                  onChange={(v: boolean) => setPf({ trackStock: v, stock: v ? form.stock : "0" })}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-primary)" }}>Count stock for this product</div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                    {form.trackStock
+                      ? "The on-hand figure shows on the catalogue and the dashboard watches it."
+                      : "The catalogue shows “stock not tracked” rather than a figure nobody has counted."}
+                  </div>
+                </div>
+              </div>
 
               {form.kind === "variable" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -487,6 +768,10 @@ export default function Products() {
                   size="md"
                   iconLeft="trash-2"
                   onClick={() => {
+                    /* The product goes, so its photograph goes with it —
+                       including one uploaded during this edit and never saved. */
+                    void deleteProductImage(form.imageUrl || form.imageRemoved);
+                    if (form.imageAdded && form.imageAdded !== form.imageUrl) void deleteProductImage(form.imageAdded);
                     deleteProduct(form.id);
                     setForm({ ...BLANK_FORM });
                   }}
@@ -495,14 +780,14 @@ export default function Products() {
                 </Button>
               )}
               <div style={{ flex: 1 }} />
-              <Button variant="ghost" size="md" onClick={() => setForm({ ...BLANK_FORM })}>
+              <Button variant="ghost" size="md" disabled={uploading} onClick={() => closeForm(false)}>
                 Cancel
               </Button>
               <Button
                 variant="primary"
                 size="md"
                 iconLeft="check"
-                disabled={!(form.name.trim() && (form.kind === "variable" ? form.variants.some((v) => v.name.trim() && parseFloat(v.price) > 0) : parseFloat(form.price) > 0))}
+                disabled={uploading || !(form.name.trim() && (form.kind === "variable" ? form.variants.some((v) => v.name.trim() && parseFloat(v.price) > 0) : parseFloat(form.price) > 0))}
                 onClick={() => {
                   const variants = form.variants
                     .filter((v) => v.name.trim() && parseFloat(v.price) > 0)
@@ -517,13 +802,15 @@ export default function Products() {
                       category_id: form.categoryId || null,
                       unit: form.unit,
                       price: form.kind === "variable" ? variants[0].price : parseFloat(form.price) || 0,
-                      stock: form.kind === "variable" ? variants.reduce((t, v) => t + v.stock, 0) : parseFloat(form.stock) || 0,
+                      stock: !form.trackStock ? 0 : form.kind === "variable" ? variants.reduce((t, v) => t + v.stock, 0) : parseFloat(form.stock) || 0,
                       fractional: form.fractional,
                       kind: form.kind,
+                      track_stock: form.trackStock,
+                      image_url: form.imageUrl.trim() || null,
                     },
                     variants
                   );
-                  setForm({ ...BLANK_FORM });
+                  closeForm(true);
                 }}
               >
                 {form.mode === "edit" ? "Save changes" : "Add product"}
@@ -561,3 +848,4 @@ function VarInput({ value, onChange, placeholder, mono, right }: { value: string
 
 void Textarea;
 void qtyText;
+
