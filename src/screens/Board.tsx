@@ -444,8 +444,22 @@ export default function Board() {
       )}
 
       {view === "list" && (
-        <Card padding="none">
-          <div style={{ overflowX: "auto" }}>
+        /* The board is a fixed-height workspace — the kanban needs that, so the
+           root is height:100%. A Card dropped into it is a flex item with the
+           usual flex-shrink of 1, so it shrank to whatever space was left and
+           its own overflow:hidden quietly cut the table off: the rows were
+           there, drawn, and unreachable.
+
+           It now takes the leftover height deliberately and scrolls inside it,
+           which also keeps the search and the stage counts above it on screen
+           instead of scrolling them away. minHeight:0 is the part that makes a
+           flex child allowed to be shorter than its contents at all. */
+        <Card
+          padding="none"
+          className="board-list-card"
+          style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        >
+          <div className="table-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             <DataTable
               columns={boardCols}
               rows={boardRows}

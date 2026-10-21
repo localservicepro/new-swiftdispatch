@@ -89,3 +89,54 @@
 .order-cart--stacked {
   max-height: min(46vh, 420px);
 }
+
+/* The Card puts its children in a wrapper of its own, and that wrapper is a
+   plain block. Height has to be handed down through it or it sizes to its
+   contents and the scroll box inside never gets a ceiling to scroll against —
+   which is exactly how the list ended up seven thousand pixels tall inside a
+   seven-hundred-pixel card, drawn in full and clipped to the first screenful.
+
+   Scoped to this one card by class. With no title and no actions the content
+   wrapper is the only div child, so the selector cannot catch anything else. */
+.board-list-card > div {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A table that scrolls inside its own box keeps its column headings.
+
+   Five hundred rows of dispatch with the headings scrolled off the top is a
+   grid of unlabelled numbers — which column was the total and which the
+   window? The design system's DataTable has no sticky header of its own, so
+   it is added here rather than by editing the generated bundle.
+
+   The background has to be opaque or the rows slide up underneath and show
+   through the text. */
+/* The DataTable wraps its table in a scroll box of its own, for wide tables.
+   Nested inside this one it becomes the nearest scrollport, so a sticky
+   heading anchors itself to a box that never scrolls and rides away with the
+   rows. Letting it overflow freely hands both directions to the box outside
+   it, which is the one with a height to scroll against. */
+.table-scroll > div {
+  overflow: visible !important;
+}
+
+.table-scroll table {
+  /* A cell cannot be made sticky while the table collapses its borders —
+     Chrome simply ignores it, which is why the headings scrolled away even
+     with position:sticky on them. Separate borders with no spacing render the
+     same here, because the table draws its rules on one edge of a cell rather
+     than between two. */
+  /* !important because the design system sets border-collapse inline on the
+     table, and an inline style beats an ordinary rule. */
+  border-collapse: separate !important;
+  border-spacing: 0;
+}
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-card);
+}
