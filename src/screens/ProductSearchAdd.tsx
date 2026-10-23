@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
-import { AUD, unitPrice, productPopularity, rankProducts } from "../lib/domain";
+import { AUD, unitPrice, productPopularity, rankProducts, productMatches } from "../lib/domain";
 import type { Product } from "../lib/types";
 import { Icon, Input } from "../design-system/components.js";
 import AnchoredPopover from "./AnchoredPopover";
@@ -39,7 +39,7 @@ export default function ProductSearchAdd({
     const live = products.filter((p) => p.active);
     if (!q) return live.slice(0, SHOWN);
     const hits = live.filter((p) =>
-      (p.name + " " + p.sku).toLowerCase().includes(q),
+      productMatches(p, q),
     );
     /* A product whose name starts with what was typed is almost always the one
        meant — "cement" should not open on "Cement Australia Off White" — and

@@ -21,8 +21,7 @@ import {
   unitOf,
   unitPrice,
   WINDOWS_30,
-  WINDOWS_60,
-} from "../lib/domain";
+  WINDOWS_60, productMatches } from "../lib/domain";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, type PaymentMethod } from "../lib/types";
 import type { OrderItem } from "../lib/types";
 import { addContact, createOrder, recentSites } from "../data/api";
@@ -306,7 +305,7 @@ export default function NewOrder() {
   const pq = parsed.text.trim().toLowerCase();
   const visibleProducts = products.filter((p) => {
     if (catFilter !== "All" && catName(p.category_id) !== catFilter) return false;
-    return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
+    return productMatches(p, pq);
   });
   /* Searching ranks by what the yard actually sells. Browsing a category
      keeps the catalogue order, which is the order people know the shelf in. */

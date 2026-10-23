@@ -14,7 +14,7 @@ const PRODUCT_ACTION: Record<string, string> = {
 import { useApp } from "../store/store";
 import { useUi } from "../store/ui";
 import { PickerField } from "./DateWindowPicker";
-import { AUD, qtyText, soldIn, unitFor, unitOf, unitPrice, UNITS, dmy } from "../lib/domain";
+import { AUD, qtyText, soldIn, unitFor, unitOf, unitPrice, UNITS, dmy, productMatches } from "../lib/domain";
 import type { Product, ProductUnit } from "../lib/types";
 import { addCategory, createSpecial, deleteProduct, removeCategory, removeSpecial, renameCategory, toggleSpecial, upsertProduct } from "../data/api";
 import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, Icon, Input, Select, Switch, Tabs, Textarea } from "../design-system/components.js";
@@ -79,7 +79,7 @@ export default function Products() {
   const pq = query.trim().toLowerCase();
   const matches = products.filter((p) => {
     if (catFilter !== "All categories" && catName(p.category_id) !== catFilter) return false;
-    return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
+    return productMatches(p, pq);
   });
 
   React.useEffect(() => setShownCards(CARD_PAGE), [query, catFilter, view]);
@@ -512,7 +512,7 @@ export default function Products() {
                   <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".09em", color: "var(--text-faint)" }}>Pick the products</div>
                   <Input size="sm" value={spQuery} onChange={(e: any) => setSpQuery(e.target.value)} placeholder="Search by name or SKU" />
                   <div style={{ maxHeight: 190, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, padding: 6, borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
-                    {products.filter((p) => !spQuery.trim() || (p.name + " " + p.sku).toLowerCase().includes(spQuery.trim().toLowerCase())).map((p) => {
+                    {products.filter((p) => productMatches(p, spQuery)).map((p) => {
                       const on = sp.ids.includes(p.id);
                       return (
                         <div

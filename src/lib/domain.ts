@@ -491,3 +491,21 @@ export const splitSuburbFromText = (
   }
   return best;
 };
+
+/* Does this product answer to what was typed? The name and SKU as before, and
+   also the initials of the name: the yard says "wbs" for White Brick Sand and
+   "cagp" for Cement Australia GP, and types it that way — the change sheet's
+   own example is "3.5*Wbs". A query that is a prefix of the initials matches,
+   so "wb" already finds it. */
+export const productMatches = (p: Pick<Product, "name" | "sku">, query: string): boolean => {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if ((p.name + " " + p.sku).toLowerCase().includes(q)) return true;
+  if (q.length < 2 || /\s/.test(q)) return false;
+  const initials = p.name
+    .split(/[\s\-\/]+/)
+    .filter(Boolean)
+    .map((w) => w[0].toLowerCase())
+    .join("");
+  return initials.startsWith(q);
+};

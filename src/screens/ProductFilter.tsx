@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
-import { productPopularity, rankProducts } from "../lib/domain";
+import { productPopularity, rankProducts, productMatches } from "../lib/domain";
 import { Icon, Input } from "../design-system/components.js";
 import AnchoredPopover from "./AnchoredPopover";
 
@@ -35,7 +35,7 @@ export default function ProductFilter({
   const matches = useMemo(() => {
     if (!q) return products.slice(0, SHOWN);
     const hits = products.filter((p) =>
-      (p.name + " " + p.sku).toLowerCase().includes(q),
+      productMatches(p, q),
     );
     return rankProducts(hits, q, popularity, (p) => p.id).slice(0, SHOWN);
   }, [products, q, popularity]);
