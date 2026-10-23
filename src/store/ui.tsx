@@ -2,7 +2,7 @@
    modals. Kept separate from the data store so screen state never masquerades as
    database state. */
 
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { useEffect, createContext, useContext, useMemo, useState } from "react";
 import { blankDraft, useApp, type CartLine, type DeliveryDraft } from "./store";
 import type { OrderStatus } from "../lib/types";
 
@@ -82,11 +82,27 @@ interface UiState {
   openOrderDrawer: (orderId: string | null, masterId: string | null, tab?: string) => void;
 }
 
+/* The screen survives a reload. The yard refreshes often — until live updates
+   landed it was the only way to see a colleague's change — and every refresh
+   dropped them on the dashboard. The new-order screen is the exception: its
+   cart is not in this store, so coming back to an empty order form helps nobody;
+   Orders is where a saved draft is offered from. */
+const SCREENS = ["dashboard", "board", "neworder", "orders", "customers", "payments", "products", "fleet", "team", "suburbs", "reports", "settings", "docs"];
+const readNav = (): string => {
+  try {
+    const v = localStorage.getItem("sdp_nav") || "";
+    if (v === "neworder") return "orders";
+    return SCREENS.includes(v) ? v : "dashboard";
+  } catch {
+    return "dashboard";
+  }
+};
+
 const UiCtx = createContext<UiState | null>(null);
 
 export function UiProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState(() => ({
-    nav: "dashboard",
+    nav: readNav(),
     collapsed: false,
     pendingNav: null as string | null,
     orderMode: "standard" as "standard" | "yardsale",
@@ -121,6 +137,14 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     custTab: "overview",
     lastOpenedOrder: null as string | null,
   }));
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sdp_nav", state.nav);
+    } catch {
+      /* private window — the screen just is not remembered */
+    }
+  }, [state.nav]);
 
   const api = useMemo<UiState>(() => {
     const set = (patch: Partial<UiState>) => setState((s) => ({ ...s, ...patch }) as any);

@@ -1,5 +1,6 @@
 import React from "react";
 import { useApp } from "./store/store";
+import { startLive, stopLive } from "./data/live";
 import { SidebarNav, Icon, Button, Tabs, Toast } from "./design-system/components.js";
 import Login from "./screens/Login";
 import Dashboard from "./screens/Dashboard";
@@ -42,6 +43,7 @@ function Shell() {
   const user = useApp((s) => s.user);
   const theme = useApp((s) => s.theme);
   const setTheme = useApp((s) => s.setTheme);
+  const live = useApp((s) => s.live);
   const toasts = useApp((s) => s.toasts);
   const dismissToast = useApp((s) => s.dismissToast);
   const boardCount = useApp(
@@ -52,6 +54,14 @@ function Shell() {
   const nav = ui.nav;
   const [title, subtitle] = SCREEN_META[nav] || SCREEN_META.board;
   const { narrow, tight } = useViewport();
+
+  /* Live updates for as long as someone is signed in. Shell only exists
+     while there is a user, so mounting it is the sign-in and unmounting it
+     the sign-out. */
+  React.useEffect(() => {
+    startLive();
+    return () => stopLive();
+  }, []);
 
   /* Two copies of the app side by side on one monitor is how several people
      here work, and 250px of navigation in a 680px window is a third of the
@@ -243,8 +253,11 @@ function Shell() {
                   paddingRight: 6,
                 }}
               >
-                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--feedback-success)" }} />
-                Live
+                {/* Green while the live channel is up; amber while it is
+                    reconnecting. Until live updates existed this dot was
+                    decoration. */}
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: live ? "var(--feedback-success)" : "var(--feedback-warning)" }} />
+                {live ? "Live" : "Reconnecting"}
               </div>
             )}
             <Button variant="secondary" size="sm" iconLeft="zap" title="Yard sale" onClick={() => ui.startYardSale()}>

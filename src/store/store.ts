@@ -63,6 +63,8 @@ interface AppState {
   historyLoaded: boolean;
   historyLoading: boolean;
   user: SessionUser | null;
+  /* True while the live-updates channel is subscribed (see data/live.ts). */
+  live: boolean;
   theme: "dark" | "light";
 
   // data
@@ -138,6 +140,7 @@ export const useApp = create<AppState>((set, get) => ({
   historyLoaded: false,
   historyLoading: false,
   user: null,
+  live: false,
   theme: (localStorage.getItem("sdp-admin-theme") as "dark" | "light") || "dark",
 
   suburbs: [],
