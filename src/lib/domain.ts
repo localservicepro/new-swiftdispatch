@@ -11,8 +11,7 @@ import type {
   Product,
   ProductUnit,
   Special,
-  Suburb,
-} from "./types";
+  Suburb, PaymentMethod } from "./types";
 
 export const AUD = (n: number) =>
   "$" + n.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -290,12 +289,45 @@ export const LANES: { id: OrderStatus; title: string; accent: string; statuses: 
 
 /* Who the order is for, in the terms dispatch actually prioritises by: accounts
    first, then trade, then everyone else. The board colours cards by this. */
-export type CustomerClass = "account" | "trade" | "residential";
+/* Who an order is for, for colouring. Five classes rather than three because
+   the yard asked for seven-day accounts and card-on-file customers to stand
+   apart on the board, and because Trade and Account were both blue, which is
+   why "please differentiate between trades and accounts" came up twice. */
+export type CustomerClass = "account" | "account_7" | "card_on_file" | "trade" | "residential";
 
 export const CLASS_STYLE: Record<CustomerClass, { label: string; colour: string }> = {
   account: { label: "Account", colour: "var(--brand-primary)" },
-  trade: { label: "Trade", colour: "var(--status-loading)" },
+  account_7: { label: "7 day account", colour: "var(--status-enroute)" },
+  card_on_file: { label: "Card on file", colour: "var(--status-delivered)" },
+  trade: { label: "Trade", colour: "var(--status-preparing)" },
   residential: { label: "Residential", colour: "var(--text-faint)" },
+};
+
+export const customerClass = (c: Customer | null | undefined): CustomerClass => {
+  if (!c) return "residential";
+  if (c.billing === "account") return c.terms_days === 7 ? "account_7" : "account";
+  if (c.card_on_file) return "card_on_file";
+  return c.tier === "Trade" ? "trade" : "residential";
+};
+
+/* How a new order for this customer settles unless someone says otherwise.
+   Account customers settle on account — there is no other way they ever do —
+   and a customer the yard holds a card for settles by it. Everyone else has
+   to be asked. */
+export const defaultSettleMethod = (c: Customer | null | undefined): PaymentMethod | null => {
+  if (!c) return null;
+  if (c.billing === "account") return c.terms_days === 7 ? "account_7" : "on_account";
+  if (c.card_on_file) return "card_on_file";
+  return null;
+};
+
+/* "30 days account", "7 day account", "Card on file", "Prepaid" — the one
+   phrase for how a customer settles, wherever it is shown. */
+export const settleLabelOf = (c: Customer | null | undefined): string => {
+  if (!c) return "Prepaid";
+  if (c.billing === "account") return c.terms_days === 7 ? "7 day account" : `${c.terms_days} days account`;
+  if (c.card_on_file) return "Card on file";
+  return "Prepaid";
 };
 
 export const STATUS_ACCENT: Partial<Record<OrderStatus, string>> = {

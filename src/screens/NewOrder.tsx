@@ -8,6 +8,8 @@ import {
   fuelOf,
   resolvedSuburbFee,
   customerBadgeType,
+  defaultSettleMethod,
+  settleLabelOf,
   dmy,
   isoFromDmy,
   qtyText,
@@ -18,7 +20,7 @@ import {
   WINDOWS_30,
   WINDOWS_60,
 } from "../lib/domain";
-import { PAYMENT_METHODS } from "../lib/types";
+import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, type PaymentMethod } from "../lib/types";
 import type { OrderItem } from "../lib/types";
 import { addContact, createOrder, recentSites } from "../data/api";
 import {
@@ -237,8 +239,8 @@ export default function NewOrder() {
          pick a prepaid one, and the order still said On Account. So the app
          only overwrites what the app itself filled in. A method somebody chose
          by hand survives either way. */
-      ...(c.billing === "account"
-        ? { settleMethod: "on_account", settleMethodAuto: true }
+      ...(defaultSettleMethod(c)
+        ? { settleMethod: defaultSettleMethod(c), settleMethodAuto: true }
         : ui.settleMethodAuto
           ? { settleMethod: null, settleMethodAuto: false }
           : {}),
@@ -531,7 +533,7 @@ export default function NewOrder() {
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
                     Acct {effectiveCustomer.account_number} ·{" "}
-                    {effectiveCustomer.billing === "account" ? `${effectiveCustomer.terms_days} days account` : "prepaid"}
+                    {settleLabelOf(effectiveCustomer).toLowerCase()}
                   </div>
                 </div>
                 {yard && ui.yardCustomer && (
@@ -1429,12 +1431,10 @@ export default function NewOrder() {
                   paymentType={
                     yard && !ui.yardCustomer
                       ? "Prepaid"
-                      : effectiveCustomer?.billing === "account"
-                        ? `${effectiveCustomer.terms_days}-day account`
-                        : "Prepaid"
+                      : settleLabelOf(effectiveCustomer)
                   }
                   paymentTypeSource="customer"
-                  paymentMethod={ui.settleMethod ? ui.settleMethod.replace(/_/g, " ") : undefined}
+                  paymentMethod={ui.settleMethod ? PAYMENT_METHOD_LABEL[ui.settleMethod as PaymentMethod] || ui.settleMethod : undefined}
                   statementEligible={!yard && effectiveCustomer?.billing === "account"}
                 />
                 <Card title="Order details" padding="default">
@@ -1450,8 +1450,9 @@ export default function NewOrder() {
                         required
                       />
                       <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
-                        Records how this transaction settled — the billing relationship above comes from the customer
-                        record.
+                        {ui.settleMethodAuto
+                          ? "Filled in from the customer record — change it here if this order settles differently."
+                          : "How this order settles. Account and card-on-file customers have it filled in for them."}
                       </div>
                     </div>
                     {adjustmentFields}

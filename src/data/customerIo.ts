@@ -386,6 +386,7 @@ export async function applyCustomerImport(plan: ImportPlan): Promise<ImportResul
       credit_limit: row.values.credit_limit ?? 0,
       balance: row.values.balance ?? 0,
       stop_credit: row.values.stop_credit ?? false,
+      card_on_file: false,
       customer_since: row.values.customer_since || new Date().toISOString().slice(0, 10),
       billing_street: row.values.billing_street ?? null,
       billing_suburb_id: row.values.billing_suburb_id ?? null,

@@ -16,8 +16,9 @@ import {
   dmy,
   isoFromDmy,
   customerBadgeType,
+  settleLabelOf,
 } from "../lib/domain";
-import { PAYMENT_METHOD_LABEL, PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
+import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
 import {
   addOrderItem,
   copyToAllSplits,
@@ -764,7 +765,7 @@ export default function OrderDrawer() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {customer ? (
                     <>
-                      <Card title={customer.name} subtitle={`Acct ${customer.account_number} · ${customer.entity} · ${customer.tier} pricing · ${customer.billing === "account" ? `${customer.terms_days} days account` : "prepaid"}`} padding="default">
+                      <Card title={customer.name} subtitle={`Acct ${customer.account_number} · ${customer.entity} · ${customer.tier} pricing · ${settleLabelOf(customer).toLowerCase()}`} padding="default">
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <StatusBadge kind="customer" value={customerBadgeType(customer)} />
                           {customer.stop_credit && (
@@ -811,6 +812,26 @@ export default function OrderDrawer() {
                 <>
                   {isMaster && masterSummaryProps && <PaymentSummary {...masterSummaryProps} />}
                   {!isMaster && sel && <PaymentSummary {...paymentSummaryProps(sel)} />}
+                  {/* The method can be changed after the fact — an order taken
+                      as card and paid in the yard is not a rare thing. A legacy
+                      value from the old system stays choosable on the order
+                      that carries it and nowhere else. */}
+                  {!isMaster && sel && (
+                    <Card title="Settlement" padding="default">
+                      <Select
+                        size="sm"
+                        label="Settlement method"
+                        options={
+                          sel.payment_method && !PAYMENT_METHODS.some((m) => m.value === sel.payment_method)
+                            ? [...PAYMENT_METHODS, { value: sel.payment_method, label: PAYMENT_METHOD_LABEL[sel.payment_method] || sel.payment_method }]
+                            : PAYMENT_METHODS
+                        }
+                        value={sel.payment_method || ""}
+                        onChange={(e: any) => patchOrder(sel.id, { payment_method: (e.target.value || null) as Order["payment_method"] })}
+                        allowUnset
+                      />
+                    </Card>
+                  )}
                 </>
               )}
             </div>

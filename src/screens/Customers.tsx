@@ -4,7 +4,7 @@ import HistoryNotice from "./HistoryNotice";
 import NewCustomerModal from "./NewCustomerModal";
 import { ContactsEditor, CustomerDetails } from "./CustomerDetails";
 import { useUi } from "../store/ui";
-import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
+import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, settleLabelOf, suburbRate } from "../lib/domain";
 import type { Customer, CustomerSite, Suburb } from "../lib/types";
 import { applyCustomerImport, exportCustomersCsv, planCustomerImport, type ImportPlan } from "../data/customerIo";
 import ImportPreview, { type PreviewRow } from "./ImportPreview";
@@ -76,8 +76,10 @@ export default function Customers() {
          row has to stay loaded and must not be listed. */
       if (c.archived_at) return false;
       if (entityFilter !== "Everyone" && c.entity !== entityFilter) return false;
-      if (billingFilter === "Prepaid" && c.billing !== "prepaid") return false;
+      if (billingFilter === "Prepaid" && (c.billing !== "prepaid" || c.card_on_file)) return false;
       if (billingFilter === "Account" && c.billing !== "account") return false;
+      if (billingFilter === "7 day account" && !(c.billing === "account" && c.terms_days === 7)) return false;
+      if (billingFilter === "Card on file" && !c.card_on_file) return false;
       if (billingFilter === "Blocked only" && !blockedState(c).blocked) return false;
         if (!q) return true;
         return (c.name + " " + c.account_number + " " + c.contacts.map((x) => x.name + " " + (x.phone || "")).join(" "))
@@ -99,7 +101,7 @@ export default function Customers() {
           bl,
           contact: ordersContact?.name || "—",
           phone: ordersContact?.phone || "—",
-          settle: c.billing === "account" ? `${c.terms_days} days account` : "Prepaid",
+          settle: settleLabelOf(c),
           credit: c.billing === "account" ? `${AUD0(Number(c.balance))} / ${AUD0(Number(c.credit_limit))}` : "—",
           state: bl.blocked ? "Blocked" : c.billing === "account" ? "Open" : "Prepaid",
           portal: c.billing !== "account" ? "—" : c.portal_enabled ? "Enabled" : "Off",
@@ -132,7 +134,7 @@ export default function Customers() {
           <Input size="sm" icon="search" placeholder="Name, trading name, contact, phone, account number" value={query} onChange={(e: any) => setQuery(e.target.value)} />
         </div>
         <Select size="sm" options={["Everyone", "Individual", "Sole trader", "Company"]} value={entityFilter} onChange={(e: any) => setEntityFilter(e.target.value)} style={{ width: 190, flexShrink: 0 }} />
-        <Select size="sm" options={["All settlement", "Prepaid", "Account", "Blocked only"]} value={billingFilter} onChange={(e: any) => setBillingFilter(e.target.value)} style={{ width: 180, flexShrink: 0 }} />
+        <Select size="sm" options={["All settlement", "Prepaid", "Account", "7 day account", "Card on file", "Blocked only"]} value={billingFilter} onChange={(e: any) => setBillingFilter(e.target.value)} style={{ width: 180, flexShrink: 0 }} />
         <Button variant="outline" size="sm" iconLeft="download" onClick={() => {
           const n = exportCustomersCsv();
           app.toast({ tone: "success", title: `${n} ${n === 1 ? "customer" : "customers"} exported`, description: "The file is also the template the importer reads." });
@@ -436,7 +438,7 @@ function CustomerDrawer(props: {
           </div>
           <div style={{ fontSize: 12, color: "var(--text-faint)", marginTop: 4 }}>
             Acct {cust.account_number} · {cust.entity} · {cust.tier} pricing ·{" "}
-            {cust.billing === "account" ? `${cust.terms_days} days account` : "prepaid"} · customer since{" "}
+            {settleLabelOf(cust).toLowerCase()} · customer since{" "}
             {dmy(cust.customer_since)}
           </div>
         </div>

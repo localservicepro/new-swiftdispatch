@@ -5,7 +5,7 @@ import {
   AUD,
   AUD0,
   CLASS_STYLE,
-  customerBadgeType,
+  customerClass,
   deliverySortKey,
   feeOf,
   goodsOf,
@@ -98,7 +98,7 @@ export default function Board() {
   );
 
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
-  const classOf = (o: Order) => customerBadgeType(customerOf(o));
+  const classOf = (o: Order) => customerClass(customerOf(o));
 
   const q = query.trim().toLowerCase();
   const matches = (o: Order) => {
@@ -233,7 +233,7 @@ export default function Board() {
      for, which is the thing the column cannot tell you. */
   const legend = (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-      {(["account", "trade", "residential"] as const).map((k) => (
+      {(Object.keys(CLASS_STYLE) as (keyof typeof CLASS_STYLE)[]).map((k) => (
         <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-faint)" }}>
           <span style={{ width: 9, height: 3, borderRadius: 2, background: CLASS_STYLE[k].colour }} />
           {CLASS_STYLE[k].label}
@@ -459,23 +459,30 @@ export default function Board() {
                           </div>
                         )}
                         <OrderCard {...p} />
-                        {/* How the order settles, which the card itself has no
-                            slot for and the yard asked to see at a glance. */}
-                        {o.payment_method && (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 5,
-                              padding: "4px 10px 2px",
-                              fontSize: 11,
-                              color: "var(--text-faint)",
-                            }}
-                          >
-                            <Icon name="credit-card" size={11} />
-                            {PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method}
-                          </div>
-                        )}
+                        {/* Who it is for, in words as well as the rail colour,
+                            and how it settles — neither of which the card has
+                            a slot for and both of which the yard asked to see
+                            at a glance. */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "4px 10px 2px",
+                            fontSize: 11,
+                            color: "var(--text-faint)",
+                          }}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: rail, flexShrink: 0 }} />
+                          <span style={{ color: rail, fontWeight: 600 }}>{CLASS_STYLE[cls].label}</span>
+                          {o.payment_method && (
+                            <>
+                              <span>·</span>
+                              <Icon name="credit-card" size={11} />
+                              {PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method}
+                            </>
+                          )}
+                        </div>
                         {(orderItems[o.id] || []).some((i) => i.backordered) && (
                           <div
                             title="These lines are held for a later delivery and are left off the run sheet"

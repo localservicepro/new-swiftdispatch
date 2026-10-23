@@ -879,6 +879,8 @@ export interface NewCustomerInput {
   tier: Customer["tier"];
   billing: "Prepaid" | "Account";
   termsDays: number;
+  /* The yard holds a card for them; a new order settles by it by default. */
+  cardOnFile?: boolean;
   limit: number;
   street: string;
   suburbId: string | null;
@@ -900,6 +902,7 @@ export async function createCustomer(input: NewCustomerInput): Promise<Customer 
     billing: input.billing === "Account" ? "account" : "prepaid",
     terms_days: input.billing === "Account" ? input.termsDays : null,
     credit_limit: input.billing === "Account" ? input.limit : 0,
+    card_on_file: !!input.cardOnFile,
     billing_street: input.street || null,
     billing_suburb_id: input.suburbId,
   };

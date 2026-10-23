@@ -15,10 +15,14 @@ export type OrderStatus =
 export type PaymentStatus = "pending" | "paid" | "invoiced" | "failed" | "refunded";
 
 export type PaymentMethod =
-  | "cash"
+  | "in_yard"
   | "card"
   | "cod"
+  | "direct_deposit"
+  | "on_account"
+  | "account_7"
   | "card_on_file"
+  | "cash"
   | "direct_debit"
   | "invoice"
   | "on_account";
@@ -35,21 +39,34 @@ export type TruckType = "crane" | "small" | "medium" | "large" | "semi" | "tippe
 export type TruckStatus = "Available" | "Loading" | "Assigned" | "Out of service";
 export type ProductUnit = "m³" | "t" | "kg" | "bag" | "each" | "pallet";
 
+/* What a new order can settle by. The yard asked for the list cut to how it
+   actually takes money — In-yard, Card, Cash on delivery, Direct deposit — plus
+   the three that follow from who the customer is: a thirty-day account, a
+   seven-day account, and a card held on file. Older orders carry Cash, Direct
+   debit and Invoice from the previous system; those still display (see the
+   label map) but are not offered. */
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
-  { value: "cash", label: "Cash" },
+  { value: "in_yard", label: "In-yard" },
   { value: "card", label: "Card" },
-  { value: "cod", label: "COD" },
+  { value: "cod", label: "Cash on delivery" },
+  { value: "direct_deposit", label: "Direct deposit" },
+  { value: "on_account", label: "Account" },
+  { value: "account_7", label: "7 day account" },
   { value: "card_on_file", label: "Card on file" },
-  { value: "direct_debit", label: "Direct debit" },
-  { value: "invoice", label: "Invoice" },
-  { value: "on_account", label: "On account" },
 ];
+
+const LEGACY_METHOD_LABEL: Partial<Record<PaymentMethod, string>> = {
+  cash: "Cash",
+  direct_debit: "Direct debit",
+  invoice: "Invoice",
+};
 
 /* The stored value, spelt out. Derived from the list above so there is one
    source for what a method is called wherever it is printed. */
-export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = Object.fromEntries(
-  PAYMENT_METHODS.map((m) => [m.value, m.label])
-) as Record<PaymentMethod, string>;
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
+  ...LEGACY_METHOD_LABEL,
+  ...Object.fromEntries(PAYMENT_METHODS.map((m) => [m.value, m.label])),
+} as Record<PaymentMethod, string>;
 
 export const PAYMENT_TYPE_LABEL: Record<PaymentType, string> = {
   prepaid: "Prepaid",
@@ -175,6 +192,9 @@ export interface Customer {
   credit_limit: number;
   balance: number;
   stop_credit: boolean;
+  /* The yard holds a card and charges it after delivery. Not an account —
+     no terms, no statement — but a new order defaults to settling by it. */
+  card_on_file: boolean;
   customer_since: string;
   billing_street: string | null;
   billing_suburb_id: string | null;

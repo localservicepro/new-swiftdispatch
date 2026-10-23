@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
-import { customerBadgeType, CLASS_STYLE } from "../lib/domain";
+import { customerClass, CLASS_STYLE } from "../lib/domain";
 import type { Customer } from "../lib/types";
 import { Icon, Input } from "../design-system/components.js";
 import AnchoredPopover from "./AnchoredPopover";
@@ -166,7 +166,7 @@ export default function CustomerPicker({
         <>
           {matches.map((c, i) => {
             const on = i === cursor;
-            const cls = customerBadgeType(c);
+            const cls = customerClass(c);
             const site = c.sites.find((x) => x.is_default) || c.sites[0];
             return (
               <div

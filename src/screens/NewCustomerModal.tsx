@@ -22,7 +22,7 @@ export default function NewCustomerModal({ onClose, onCreated }: { onClose: () =
     phone: "",
     email: "",
     tier: "Trade" as Customer["tier"],
-    billing: "Account" as "Prepaid" | "Account",
+    billing: "Account" as "Prepaid" | "Account" | "7 Day Account" | "Card On File",
     terms: "30",
     limit: "10000",
     street: "",
@@ -73,19 +73,25 @@ export default function NewCustomerModal({ onClose, onCreated }: { onClose: () =
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
             <Select size="sm" label="What they pay" options={["Retail", "Trade"]} value={n2.tier} onChange={(e: any) => patch({ tier: e.target.value })} />
-            <Select size="sm" label="How they settle" options={["Prepaid", "Account"]} value={n2.billing} onChange={(e: any) => patch({ billing: e.target.value })} />
+            <Select size="sm" label="How they settle" options={["Prepaid", "Account", "7 Day Account", "Card On File"]} value={n2.billing} onChange={(e: any) => patch({ billing: e.target.value })} />
           </div>
-          {n2.billing === "Account" && (
+          {n2.billing === "Card On File" && (
+            <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+              You hold a card for them and charge it after delivery. New orders will settle by card on file unless changed.
+            </div>
+          )}
+          {(n2.billing === "Account" || n2.billing === "7 Day Account") && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
               <Select
                 size="sm"
                 label="Terms"
+                disabled={n2.billing === "7 Day Account"}
                 options={[
                   { value: "7", label: "7 days" },
                   { value: "14", label: "14 days" },
                   { value: "30", label: "30 days" },
                 ]}
-                value={n2.terms}
+                value={n2.billing === "7 Day Account" ? "7" : n2.terms}
                 onChange={(e: any) => patch({ terms: e.target.value })}
               />
               <Input size="sm" label="Credit limit" value={n2.limit} onChange={(e: any) => patch({ limit: e.target.value.replace(/[^0-9.]/g, "") })} suffix="AUD" />
@@ -133,8 +139,9 @@ export default function NewCustomerModal({ onClose, onCreated }: { onClose: () =
                 phone: n2.phone.trim(),
                 email: n2.email.trim(),
                 tier: n2.tier,
-                billing: n2.billing,
-                termsDays: Number(n2.terms),
+                billing: n2.billing === "Account" || n2.billing === "7 Day Account" ? "Account" : "Prepaid",
+                termsDays: n2.billing === "7 Day Account" ? 7 : Number(n2.terms),
+                cardOnFile: n2.billing === "Card On File",
                 limit: Number(n2.limit) || 0,
                 street: n2.street.trim(),
                 suburbId: n2.suburbId || null,

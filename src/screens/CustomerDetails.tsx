@@ -21,6 +21,24 @@ import DraftInput from "./DraftInput";
 
 const ROLES = ["Orders", "Accounts", "Site"];
 
+const settleKey = (c: Customer) =>
+  c.billing === "account" ? (c.terms_days === 7 ? "account_7" : c.terms_days === 14 ? "account_14" : "account") : c.card_on_file ? "card_on_file" : "prepaid";
+
+const settlePatch = (key: string): Partial<Customer> => {
+  switch (key) {
+    case "account":
+      return { billing: "account", terms_days: 30, card_on_file: false };
+    case "account_14":
+      return { billing: "account", terms_days: 14, card_on_file: false };
+    case "account_7":
+      return { billing: "account", terms_days: 7, card_on_file: false };
+    case "card_on_file":
+      return { billing: "prepaid", terms_days: null, card_on_file: true };
+    default:
+      return { billing: "prepaid", terms_days: null, card_on_file: false };
+  }
+};
+
 export function CustomerDetails({ cust }: { cust: Customer }) {
   const app = useApp();
   const suburbs = app.suburbs;
@@ -35,20 +53,23 @@ export function CustomerDetails({ cust }: { cust: Customer }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
           <Select size="sm" label="Who they are" options={["Individual", "Sole trader", "Company"]} value={cust.entity} onChange={(e: any) => patchCustomer(cust.id, { entity: e.target.value })} />
           <Select size="sm" label="What they pay" options={["Retail", "Trade"]} value={cust.tier} onChange={(e: any) => patchCustomer(cust.id, { tier: e.target.value })} />
+          {/* One choice covering billing, terms and the card-on-file flag,
+              because that is how the yard thinks of it: a customer is on
+              account, on a seven-day account, has a card on file, or pays up
+              front. Fourteen-day terms exist on a few records and stay
+              choosable only where already set. */}
           <Select
             size="sm"
             label="How they settle"
             options={[
               { value: "prepaid", label: "Prepaid" },
-              { value: "account", label: "Account" },
+              { value: "account", label: "Account (30 days)" },
+              ...(cust.billing === "account" && cust.terms_days === 14 ? [{ value: "account_14", label: "Account (14 days)" }] : []),
+              { value: "account_7", label: "7 day account" },
+              { value: "card_on_file", label: "Card on file" },
             ]}
-            value={cust.billing}
-            onChange={(e: any) =>
-              patchCustomer(cust.id, {
-                billing: e.target.value,
-                terms_days: e.target.value === "account" ? cust.terms_days || 30 : null,
-              })
-            }
+            value={settleKey(cust)}
+            onChange={(e: any) => patchCustomer(cust.id, settlePatch(e.target.value))}
           />
         </div>
       </Card>
