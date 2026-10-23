@@ -15,10 +15,14 @@ export type OrderStatus =
 export type PaymentStatus = "pending" | "paid" | "invoiced" | "failed" | "refunded";
 
 export type PaymentMethod =
-  | "cash"
+  | "in_yard"
   | "card"
   | "cod"
+  | "direct_deposit"
+  | "on_account"
+  | "account_7"
   | "card_on_file"
+  | "cash"
   | "direct_debit"
   | "invoice"
   | "on_account";
@@ -35,15 +39,34 @@ export type TruckType = "crane" | "small" | "medium" | "large" | "semi" | "tippe
 export type TruckStatus = "Available" | "Loading" | "Assigned" | "Out of service";
 export type ProductUnit = "m³" | "t" | "kg" | "bag" | "each" | "pallet";
 
+/* What a new order can settle by. The yard asked for the list cut to how it
+   actually takes money — In-yard, Card, Cash on delivery, Direct deposit — plus
+   the three that follow from who the customer is: a thirty-day account, a
+   seven-day account, and a card held on file. Older orders carry Cash, Direct
+   debit and Invoice from the previous system; those still display (see the
+   label map) but are not offered. */
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
-  { value: "cash", label: "Cash" },
+  { value: "in_yard", label: "In-yard" },
   { value: "card", label: "Card" },
-  { value: "cod", label: "COD" },
+  { value: "cod", label: "Cash on delivery" },
+  { value: "direct_deposit", label: "Direct deposit" },
+  { value: "on_account", label: "Account" },
+  { value: "account_7", label: "7 day account" },
   { value: "card_on_file", label: "Card on file" },
-  { value: "direct_debit", label: "Direct debit" },
-  { value: "invoice", label: "Invoice" },
-  { value: "on_account", label: "On account" },
 ];
+
+const LEGACY_METHOD_LABEL: Partial<Record<PaymentMethod, string>> = {
+  cash: "Cash",
+  direct_debit: "Direct debit",
+  invoice: "Invoice",
+};
+
+/* The stored value, spelt out. Derived from the list above so there is one
+   source for what a method is called wherever it is printed. */
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
+  ...LEGACY_METHOD_LABEL,
+  ...Object.fromEntries(PAYMENT_METHODS.map((m) => [m.value, m.label])),
+} as Record<PaymentMethod, string>;
 
 export const PAYMENT_TYPE_LABEL: Record<PaymentType, string> = {
   prepaid: "Prepaid",
@@ -86,6 +109,10 @@ export interface Product {
   kind: "single" | "variable";
   price: number;
   stock: number;
+  /* Whether `stock` is a real count. False for everything carried over from the
+     old app, which seeded a round number per product and decremented it as
+     things sold — so the figure is a leftover, not something to show anyone. */
+  track_stock: boolean;
   image_url: string | null;
   active: boolean;
   variants?: ProductVariant[];
@@ -144,6 +171,13 @@ export interface CustomerSite {
   street: string;
   suburb_id: string | null;
   is_default: boolean;
+  /* When an order last went here. The new-order screen offers the six most
+     recent per customer, newest first. */
+  last_used_at: string | null;
+  created_at?: string;
+  /* Recorded by the app when an order was delivered here, rather than typed in
+     by hand. Only these are trimmed to six; naming one claims it. */
+  auto_captured: boolean;
 }
 
 export interface Customer {
@@ -158,11 +192,19 @@ export interface Customer {
   credit_limit: number;
   balance: number;
   stop_credit: boolean;
+  /* The yard holds a card and charges it after delivery. Not an account —
+     no terms, no statement — but a new order defaults to settling by it. */
+  card_on_file: boolean;
   customer_since: string;
   billing_street: string | null;
   billing_suburb_id: string | null;
   portal_enabled: boolean;
   portal_pin: string | null;
+  myob_uid: string | null;
+  /* Set when a customer with order history is removed from the book. The row
+     stays — statements, invoices and four years of orders read through it —
+     but every picker and the customer list filter it out. */
+  archived_at: string | null;
   contacts: CustomerContact[];
   sites: CustomerSite[];
 }
@@ -176,6 +218,9 @@ export interface OrderItem {
   qty: number;
   unit_price: number;
   line_total: number;
+  /* Held for a later delivery. The line stays on the order and in its total;
+     the run sheet lists it as not on this load. */
+  backordered: boolean;
 }
 
 export interface Order {
@@ -201,6 +246,14 @@ export interface Order {
   payment_type: PaymentType | null;
   payment_type_overridden: boolean;
   payment_method: PaymentMethod | null;
+  /* Manual position within its board column, lowest first. Null means the
+     delivery time decides. Cleared when the order changes stage. */
+  board_rank: number | null;
+  /* When someone marked it paid (or a payment landed). Null while unpaid. */
+  paid_at: string | null;
+  /* The total when the order was taken, so an edit afterwards can show
+     "was / now / difference". Not used for billing. */
+  booked_total: number | null;
   payment_status: PaymentStatus;
   po_number: string | null;
   order_notes: string | null;
@@ -209,6 +262,14 @@ export interface Order {
   adjustment_value: number | null;
   processed_at: string | null;
   overrides: Record<string, boolean>;
+  fuel_surcharge: number;
+  pod_photo_url: string | null;
+  pod_at: string | null;
+  myob_uid: string | null;
+  myob_doc_type: "order" | "invoice" | null;
+  myob_number: string | null;
+  myob_pushed_at: string | null;
+  myob_error: string | null;
   deleted_at: string | null;
 }
 
@@ -247,6 +308,13 @@ export interface BusinessSettings {
   doc_format: string;
   master_prefix: string;
   print_delivery_notes: boolean;
+  /* Printed at the foot of a statement so customers know where to pay. */
+  bank_name: string | null;
+  bank_account_name: string | null;
+  bank_bsb: string | null;
+  bank_account_no: string | null;
+  payment_reference_note: string | null;
+  card_surcharge_note: string | null;
 }
 
 export interface PaymentSettings {

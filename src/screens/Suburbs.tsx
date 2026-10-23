@@ -1,16 +1,23 @@
 import React, { useState } from "react";
 import { useApp } from "../store/store";
 import { dmy } from "../lib/domain";
-import { addSuburb, patchSuburb, removeSuburb } from "../data/api";
+import { addSuburb, patchSuburb, removeSuburb, suburbReferences } from "../data/api";
+import { applySuburbImport, exportSuburbsCsv, planSuburbImport, type SuburbImportPlan } from "../data/suburbIo";
+import ImportPreview, { type PreviewRow } from "./ImportPreview";
 import { Alert, Button, Card, Icon, Input, Select, Switch } from "../design-system/components.js";
 
 export default function Suburbs() {
-  const { suburbs, orders } = useApp();
+  const app = useApp();
+  const { suburbs, orders } = app;
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState("All states");
   const [addOpen, setAddOpen] = useState(false);
   const [nsu, setNsu] = useState({ name: "", postcode: "", state: "VIC", fee: "" });
   const [note, setNote] = useState<{ title: string; body: string } | null>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importPlan, setImportPlan] = useState<{ plan: SuburbImportPlan; file: string } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [removeMissing, setRemoveMissing] = useState(false);
 
   const sq = query.trim().toLowerCase();
   const matches = suburbs.filter((s) => {
@@ -18,8 +25,11 @@ export default function Suburbs() {
     return !sq || `${s.name} ${s.postcode} ${s.state}`.toLowerCase().includes(sq);
   });
 
-  /* A suburb in use by an open order cannot be deleted — its fee is still live. */
-  const usedCount = (id: string) =>
+  /* Anything still pointing at a suburb blocks the delete — orders in any
+     state, a customer's billing suburb, a delivery site. Counting only open
+     orders left the bin looking available on rows the database would refuse. */
+  const usedCount = (id: string) => suburbReferences(id).total;
+  const openCount = (id: string) =>
     orders.filter((o) => !o.deleted_at && o.suburb_id === id && !["delivered", "cancelled"].includes(o.status)).length;
 
   const unrated = suburbs.filter((s) => s.active && !(Number(s.delivery_fee) > 0));
@@ -37,31 +47,39 @@ export default function Suburbs() {
           <Input size="sm" icon="search" value={query} onChange={(e: any) => setQuery(e.target.value)} placeholder="Suburb or postcode" />
         </div>
         <Select size="sm" options={["All states", ...states]} value={stateFilter} onChange={(e: any) => setStateFilter(e.target.value)} style={{ width: 150, flexShrink: 0 }} />
-        <Button
-          variant="ghost"
-          size="sm"
-          iconLeft="download"
-          onClick={() =>
-            setNote({
-              title: "Import expects four columns",
-              body: "suburb, postcode, state, delivery_fee. Rows are matched on postcode — an existing one updates its rate, a new one is added, and nothing is deleted. A blank fee imports as no rate, which blocks orders rather than charging zero.",
-            })
-          }
-        >
+        <Button variant="ghost" size="sm" iconLeft="download" onClick={() => fileRef.current?.click()}>
           Import CSV
         </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: "none" }}
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            setNote(null);
+            try {
+              setImportPlan({ plan: planSuburbImport(await file.text()), file: file.name });
+            } catch (err) {
+              app.toast({ tone: "danger", title: "Could not read that file", description: String((err as Error).message) });
+            }
+          }}
+        />
         <Button
           variant="ghost"
           size="sm"
           iconLeft="external-link"
-          onClick={() =>
+          onClick={() => {
+            const n = exportSuburbsCsv();
             setNote({
-              title: `Exported ${suburbs.length} suburbs`,
-              body: `suburbs-${dmy(new Date().toISOString().slice(0, 10))}.csv — suburb, postcode, state, delivery_fee. The file round-trips through Import unchanged.`,
-            })
-          }
+              title: `Exported ${n} ${n === 1 ? "suburb" : "suburbs"}`,
+              body: "suburb, postcode, state, delivery fee, active. A suburb with no rate exports as a blank fee, not zero, and imports back the same way.",
+            });
+          }}
         >
-          Export
+          Export CSV
         </Button>
         <Button variant="primary" size="sm" iconLeft="plus" onClick={() => { setAddOpen(!addOpen); setNote(null); }}>
           {addOpen ? "Cancel" : "Add suburb"}
@@ -72,6 +90,85 @@ export default function Suburbs() {
         <Alert tone="info" title={note.title}>
           {note.body}
         </Alert>
+      )}
+
+      {importPlan && (
+        <ImportPreview
+          title="Import suburbs"
+          fileName={importPlan.file}
+          busy={importing}
+          tiles={[
+            { label: "New", value: importPlan.plan.creates, tone: "good" },
+            { label: "Updated", value: importPlan.plan.updates, tone: "info" },
+            { label: "Skipped", value: importPlan.plan.rejects, tone: "bad" },
+            { label: "Warnings", value: importPlan.plan.warnings, tone: "warn" },
+          ]}
+          notes={
+            importPlan.plan.unknownColumns.length
+              ? [{ title: "Columns that were ignored", body: `${importPlan.plan.unknownColumns.join(", ")} — these do not match any suburb field, so they were left alone.` }]
+              : []
+          }
+          rows={importPlan.plan.rows.map<PreviewRow>((r) => ({
+            line: r.line,
+            action: r.action === "reject" ? "Skip" : r.action === "create" ? "New" : "Update",
+            tone: r.action === "reject" ? "bad" : r.action === "create" ? "good" : "info",
+            label: r.name,
+            code: r.postcode || undefined,
+            reason: r.reason,
+            warnings: r.warnings,
+          }))}
+          extra={
+            importPlan.plan.missing.length > 0 ? (
+              <div style={{ padding: "10px 12px", borderRadius: 8, background: "var(--surface-raised)", border: "1px solid var(--border-subtle)" }}>
+                <Switch
+                  checked={removeMissing}
+                  onChange={setRemoveMissing}
+                  label={`Clear out the ${importPlan.plan.missing.length} ${importPlan.plan.missing.length === 1 ? "suburb" : "suburbs"} this file does not mention`}
+                />
+                <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 6, textWrap: "pretty" as any }}>
+                  {(() => {
+                    const held = importPlan.plan.missing.filter((m) => m.references > 0).length;
+                    const gone = importPlan.plan.missing.length - held;
+                    return [
+                      gone ? `${gone} would be deleted outright` : null,
+                      held
+                        ? `${held} still ${held === 1 ? "has orders or customers" : "have orders or customers"} pointing at ${held === 1 ? "it" : "them"}, so ${held === 1 ? "it is" : "they are"} switched off instead — out of every picker, history still readable`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(". ") + ".";
+                  })()}
+                </div>
+              </div>
+            ) : null
+          }
+          footNote="Rows are matched on suburb name and postcode together — one postcode can cover more than one suburb."
+          writeCount={importPlan.plan.creates + importPlan.plan.updates}
+          onClose={() => {
+            setImportPlan(null);
+            setRemoveMissing(false);
+          }}
+          onConfirm={async () => {
+            setImporting(true);
+            const r = await applySuburbImport(importPlan.plan, removeMissing);
+            setImporting(false);
+            setImportPlan(null);
+            if (r.failed.length) app.toast({ tone: "danger", title: "Import did not finish", description: r.failed[0] });
+            else
+              app.toast({
+                tone: "success",
+                title: `${r.created} added, ${r.updated} updated`,
+                description:
+                  [
+                    r.deleted ? `${r.deleted} old removed` : null,
+                    r.deactivated ? `${r.deactivated} switched off` : null,
+                    importPlan.plan.rejects ? `${importPlan.plan.rejects} rows skipped` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || undefined,
+              });
+          }}
+        />
       )}
 
       {addOpen && (
@@ -139,11 +236,15 @@ export default function Suburbs() {
                     style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontFamily: "inherit", fontSize: 13, fontVariantNumeric: "tabular-nums", color: "var(--text-primary)" }}
                   />
                 </div>
-                <span className="tabular" style={{ fontSize: 12, color: "var(--text-faint)", textAlign: "right" }}>{used || "—"}</span>
+                <span className="tabular" style={{ fontSize: 12, color: "var(--text-faint)", textAlign: "right" }}>{openCount(s.id) || "—"}</span>
                 <Switch checked={s.active} onChange={(v: boolean) => patchSuburb(s.id, { active: v })} />
                 <div
-                  onClick={() => !used && removeSuburb(s.id)}
-                  title={used ? `Used by ${used} open ${used === 1 ? "order" : "orders"} — reassign first` : `Delete ${s.name}`}
+                  onClick={() => !used && void removeSuburb(s.id)}
+                  title={
+                    used
+                      ? `${used} ${used === 1 ? "record" : "records"} still point at ${s.name}, so it cannot be deleted. Switch it off instead — it stops being offered on new orders and the history stays readable.`
+                      : `Delete ${s.name}`
+                  }
                   style={{ cursor: used ? "not-allowed" : "pointer", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid var(--border-default)", color: used ? "var(--text-faint)" : "var(--text-muted)" }}
                 >
                   <Icon name="trash-2" size={12} />

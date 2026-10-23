@@ -11,8 +11,7 @@ import type {
   Product,
   ProductUnit,
   Special,
-  Suburb,
-} from "./types";
+  Suburb, PaymentMethod } from "./types";
 
 export const AUD = (n: number) =>
   "$" + n.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -156,26 +155,76 @@ export const suburbRate = (suburbId: string | null | undefined, suburbs: Suburb[
   };
 };
 
+/* Delivery pricing (Payments › Settings): the fee charged is the suburb rate
+   plus the configured markup. A hand-typed fee is deliberate and taken as-is —
+   markup never silently stacks on top of it. */
+export interface DeliveryPricing {
+  markup_type: "percent" | "fixed";
+  markup_value: number;
+  fuel_surcharge: number;
+}
+
+export const markupOn = (base: number, pay: DeliveryPricing | null | undefined): number => {
+  if (!pay) return 0;
+  const mv = Number(pay.markup_value) || 0;
+  return Math.round((pay.markup_type === "percent" ? (base * mv) / 100 : mv) * 100) / 100;
+};
+
+export const resolvedSuburbFee = (
+  suburbId: string | null | undefined,
+  suburbs: Suburb[],
+  pay: DeliveryPricing | null | undefined
+): { base: number; markup: number; total: number } => {
+  const rate = suburbRate(suburbId, suburbs);
+  /* No resolvable suburb means no fee at all — markup never applies to nothing,
+     and the order is blocked until a suburb with a rate is chosen (§5.8). */
+  if (rate.missing) return { base: 0, markup: 0, total: 0 };
+  const base = rate.fee || 0;
+  const markup = markupOn(base, pay);
+  return { base, markup, total: Math.round((base + markup) * 100) / 100 };
+};
+
+export const fuelOf = (pay: DeliveryPricing | null | undefined): number =>
+  pay ? Number(pay.fuel_surcharge) || 0 : 0;
+
 export const feeOf = (
   o: Pick<Order, "fee_source" | "delivery_fee" | "suburb_id">,
-  suburbs: Suburb[]
+  suburbs: Suburb[],
+  pay?: DeliveryPricing | null
 ): number => {
   if (o.fee_source === "manual") return Number(o.delivery_fee) || 0;
-  return suburbRate(o.suburb_id, suburbs).fee || 0;
+  return resolvedSuburbFee(o.suburb_id, suburbs, pay).total;
 };
 
 export const goodsOf = (items: OrderItem[]) => items.reduce((t, i) => t + Number(i.line_total), 0);
 
-export const orderTotal = (o: Order, items: OrderItem[], suburbs: Suburb[]) => {
+/* What is actually on the order, in one line: "2 m³ 20mm Crushed Rock · 3 bag
+   Cement". Both list views show it, because knowing an order is $340 tells you
+   nothing about whether it needs the tipper or the crane truck, and opening
+   every order to find out is what the yard was doing instead. */
+export const itemsText = (items: OrderItem[], productById: Map<string, Product>): string =>
+  items
+    .map((i) => {
+      const p = i.product_id ? productById.get(i.product_id) : undefined;
+      return `${qtyText(Number(i.qty), p?.unit || "each")} ${p?.name || i.description || "Item"}${i.backordered ? " (backorder)" : ""}`;
+    })
+    .join(" · ");
+
+/* adjustment_value is signed: negative discounts, positive surcharges. */
+export const adjustmentOf = (
+  o: Pick<Order, "adjustment_type" | "adjustment_value">,
+  goods: number
+): number => {
+  const v = Number(o.adjustment_value) || 0;
+  if (o.adjustment_type === "percent") return Math.round(goods * v) / 100;
+  if (o.adjustment_type === "amount") return v;
+  return 0;
+};
+
+export const orderTotal = (o: Order, items: OrderItem[], suburbs: Suburb[], pay?: DeliveryPricing | null) => {
   const goods = goodsOf(items);
-  const fee = o.method === "delivery" ? feeOf(o, suburbs) : 0;
-  const adjust =
-    o.adjustment_type === "percent"
-      ? -goods * (Number(o.adjustment_value) || 0) / 100
-      : o.adjustment_type === "amount"
-        ? -(Number(o.adjustment_value) || 0)
-        : 0;
-  return Math.round((goods + fee + adjust) * 100) / 100;
+  const fee = o.method === "delivery" ? feeOf(o, suburbs, pay) + (Number(o.fuel_surcharge) || 0) : 0;
+  return Math.round((goods + fee + adjustmentOf(o, goods)) * 100) / 100;
 };
 
 /* Stop credit: manual hold, or the balance over the limit on an account. */
@@ -216,14 +265,70 @@ export const customerBadgeType = (c: Customer | null | undefined): "account" | "
   return c.tier === "Trade" ? "trade" : "residential";
 };
 
-export const LANES: { id: OrderStatus; title: string; accent: string }[] = [
-  { id: "on_hold", title: "On hold", accent: "var(--status-on-hold)" },
-  { id: "requested", title: "Requested", accent: "var(--status-requested)" },
-  { id: "preparing", title: "Confirmed & preparing", accent: "var(--status-preparing)" },
-  { id: "loading", title: "Loading", accent: "var(--status-loading)" },
-  { id: "en_route", title: "En route", accent: "var(--status-enroute)" },
-  { id: "delivered", title: "Delivered", accent: "var(--status-delivered)" },
+/* Board lanes. A lane is not the same thing as a status: "Confirmed &
+   preparing" holds both, because nobody at the yard writes an order down they
+   are not going to fill — taking it is confirming it — and two columns for one
+   decision meant every order got dragged twice.
+
+   Requested stays a real status all the same. Orders the yard did not raise
+   itself arrive in it from the customer portal, and those genuinely are
+   unconfirmed; they sit in the same lane with a flag on them until someone
+   looks. Dropping a card into the lane confirms it. */
+export const LANES: { id: OrderStatus; title: string; accent: string; statuses: OrderStatus[] }[] = [
+  { id: "on_hold", title: "On hold", accent: "var(--status-on-hold)", statuses: ["on_hold"] },
+  {
+    id: "preparing",
+    title: "Confirmed & preparing",
+    accent: "var(--status-preparing)",
+    statuses: ["requested", "preparing"],
+  },
+  { id: "loading", title: "Loading", accent: "var(--status-loading)", statuses: ["loading"] },
+  { id: "en_route", title: "En route", accent: "var(--status-enroute)", statuses: ["en_route"] },
+  { id: "delivered", title: "Delivered", accent: "var(--status-delivered)", statuses: ["delivered"] },
 ];
+
+/* Who the order is for, in the terms dispatch actually prioritises by: accounts
+   first, then trade, then everyone else. The board colours cards by this. */
+/* Who an order is for, for colouring. Five classes rather than three because
+   the yard asked for seven-day accounts and card-on-file customers to stand
+   apart on the board, and because Trade and Account were both blue, which is
+   why "please differentiate between trades and accounts" came up twice. */
+export type CustomerClass = "account" | "account_7" | "card_on_file" | "trade" | "residential";
+
+export const CLASS_STYLE: Record<CustomerClass, { label: string; colour: string }> = {
+  account: { label: "Account", colour: "var(--brand-primary)" },
+  account_7: { label: "7 day account", colour: "var(--status-enroute)" },
+  card_on_file: { label: "Card on file", colour: "var(--status-delivered)" },
+  trade: { label: "Trade", colour: "var(--status-preparing)" },
+  residential: { label: "Residential", colour: "var(--text-faint)" },
+};
+
+export const customerClass = (c: Customer | null | undefined): CustomerClass => {
+  if (!c) return "residential";
+  if (c.billing === "account") return c.terms_days === 7 ? "account_7" : "account";
+  if (c.card_on_file) return "card_on_file";
+  return c.tier === "Trade" ? "trade" : "residential";
+};
+
+/* How a new order for this customer settles unless someone says otherwise.
+   Account customers settle on account — there is no other way they ever do —
+   and a customer the yard holds a card for settles by it. Everyone else has
+   to be asked. */
+export const defaultSettleMethod = (c: Customer | null | undefined): PaymentMethod | null => {
+  if (!c) return null;
+  if (c.billing === "account") return c.terms_days === 7 ? "account_7" : "on_account";
+  if (c.card_on_file) return "card_on_file";
+  return null;
+};
+
+/* "30 days account", "7 day account", "Card on file", "Prepaid" — the one
+   phrase for how a customer settles, wherever it is shown. */
+export const settleLabelOf = (c: Customer | null | undefined): string => {
+  if (!c) return "Prepaid";
+  if (c.billing === "account") return c.terms_days === 7 ? "7 day account" : `${c.terms_days} days account`;
+  if (c.card_on_file) return "Card on file";
+  return "Prepaid";
+};
 
 export const STATUS_ACCENT: Partial<Record<OrderStatus, string>> = {
   requested: "var(--status-requested)",
@@ -311,4 +416,96 @@ export const deliverySortKey = (o: Pick<Order, "delivery_date" | "delivery_windo
     mins = m ? Number(m[1]) * 60 + Number(m[2]) : 24 * 60;
   }
   return day + mins * 60000 + new Date(o.placed_at).getTime() / 1e7;
+};
+
+/* How often each product actually gets ordered, by distinct order. The yard's
+   own words: staff "often select the wrong product, leading to incorrect
+   pricing", because the search listed every "soil" alphabetically and the one
+   they sell forty times a week was third. Counted over whatever orders are
+   loaded — the working window, plus history once it has been fetched. */
+export const productPopularity = (orderItems: Record<string, OrderItem[]>): Map<string, number> => {
+  const m = new Map<string, number>();
+  for (const lines of Object.values(orderItems)) {
+    const seen = new Set<string>();
+    for (const i of lines) {
+      if (!i.product_id || seen.has(i.product_id)) continue;
+      seen.add(i.product_id);
+      m.set(i.product_id, (m.get(i.product_id) || 0) + 1);
+    }
+  }
+  return m;
+};
+
+/* Search-result order for products: what was typed at the start of the name
+   first, then the most-ordered, then the alphabet. */
+export const rankProducts = <T extends { name: string }>(hits: T[], q: string, pop: Map<string, number>, idOf: (p: T) => string): T[] =>
+  [...hits].sort(
+    (a, b) =>
+      Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)) ||
+      (pop.get(idOf(b)) || 0) - (pop.get(idOf(a)) || 0) ||
+      a.name.localeCompare(b.name)
+  );
+
+/* A date window for the list filters. Either bound may be empty — "from the
+   first of the month" and "up to Friday" are both real questions — and the
+   end is inclusive, because nobody asking for "to the 31st" means the 30th.
+   Dates are ISO (YYYY-MM-DD); the returned test takes a millisecond time. */
+export const rangeTest = (fromIso: string, toIso: string): ((t: number) => boolean) => {
+  const from = fromIso ? new Date(fromIso + "T00:00:00").getTime() : -Infinity;
+  const to = toIso ? new Date(toIso + "T00:00:00").getTime() + 86_400_000 : Infinity;
+  return (t) => t >= from && t < to;
+};
+
+/* Every word typed has to be found, so "pearce 209.50" narrows rather than
+   widens — the yard asked to be able to combine customer and total when a
+   caller has neither an order number nor an invoice in front of them. */
+export const matchesAllTerms = (hay: string, query: string): boolean => {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return terms.every((t) => hay.includes(t));
+};
+
+/* The suburbs anyone may pick. The table carries four interstate rows from the
+   import — one each in ACT, NSW, QLD and WA — and the yard does not deliver
+   interstate, so offering them was only a way to pick the wrong one. They stay
+   in the table for the history that points at them. */
+export const pickableSuburbs = (suburbs: Suburb[]): Suburb[] =>
+  suburbs.filter((s) => s.active && (!s.state || s.state.toUpperCase() === "VIC"));
+
+/* "12 Reserve Rd, Box Hill" → the street and the suburb, when the text ends in
+   a suburb the yard delivers to (a postcode or "VIC" after it is fine). */
+export const splitSuburbFromText = (
+  text: string,
+  suburbs: Suburb[]
+): { street: string; suburb: Suburb } | null => {
+  const t = text.trim().replace(/\s+/g, " ");
+  if (!t) return null;
+  const low = t.toLowerCase();
+  let best: { street: string; suburb: Suburb } | null = null;
+  for (const s of pickableSuburbs(suburbs)) {
+    const name = s.name.toLowerCase();
+    const re = new RegExp(`(?:^|[\\s,]+)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[\\s,]+vic\\.?)?(?:[\\s,]+${s.postcode})?\\s*$`, "i");
+    const m = low.match(re);
+    if (!m) continue;
+    const street = t.slice(0, t.length - m[0].length).replace(/[\s,]+$/, "");
+    if (!best || s.name.length > best.suburb.name.length) best = { street, suburb: s };
+  }
+  return best;
+};
+
+/* Does this product answer to what was typed? The name and SKU as before, and
+   also the initials of the name: the yard says "wbs" for White Brick Sand and
+   "cagp" for Cement Australia GP, and types it that way — the change sheet's
+   own example is "3.5*Wbs". A query that is a prefix of the initials matches,
+   so "wb" already finds it. */
+export const productMatches = (p: Pick<Product, "name" | "sku">, query: string): boolean => {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if ((p.name + " " + p.sku).toLowerCase().includes(q)) return true;
+  if (q.length < 2 || /\s/.test(q)) return false;
+  const initials = p.name
+    .split(/[\s\-\/]+/)
+    .filter(Boolean)
+    .map((w) => w[0].toLowerCase())
+    .join("");
+  return initials.startsWith(q);
 };
