@@ -40,6 +40,7 @@ import ProductCard from "./ProductCard";
 import CategoryPicker from "./CategoryPicker";
 import { PickerField } from "./DateWindowPicker";
 import CustomerPicker from "./CustomerPicker";
+import MoneyField from "./MoneyField";
 import { useViewport } from "../lib/viewport";
 import NewCustomerModal from "./NewCustomerModal";
 
@@ -169,10 +170,12 @@ export default function NewOrder() {
         .map((l, i) => {
           if (i !== index) return l;
           const u = unitFor(product(l.productId));
-          /* The button moves by the step; it does not snap to it. A line typed
-             as 0.33 goes to 0.58, not to 0.5 — nudging an amount should not
-             quietly correct it to one the app prefers. */
-          return { ...l, qty: Math.max(0, Math.round((l.qty + dir * u.step) * 1000) / 1000), typed: null };
+          /* By one, whatever the unit, and never snapped: a line typed as 0.33
+             goes to 1.33, not to 1.25. The yard said twice that the buttons
+             have always moved by one and the quarter-metre step was the odd
+             thing out. Typing is still how you get to any other amount. */
+          void u;
+          return { ...l, qty: Math.max(0, Math.round((l.qty + dir) * 1000) / 1000), typed: null };
         })
         .filter((l) => l.qty > 0)
     );
@@ -288,7 +291,7 @@ export default function NewOrder() {
      Without a separator the whole thing is just a search, because plenty of
      products begin with a number — 20mm Crushed Rock among them. */
   const parsed = useMemo(() => {
-    const m = prodQuery.match(/^\s*(\d+(?:\.\d+)?)\s*[*x×X]\s*(.*)$/);
+    const m = prodQuery.match(/^\s*(\d*\.?\d+)\s*[*x×X]\s*(.*)$/);
     if (!m) return { qty: null as number | null, text: prodQuery };
     const n = parseFloat(m[1]);
     return { qty: isNaN(n) || n <= 0 ? null : n, text: m[2] };
@@ -420,7 +423,13 @@ export default function NewOrder() {
 
   /* One adjustment, edited from either step: direction (discount or surcharge),
      amount, and whether that amount is a percentage of goods or dollars. */
-  const AdjustmentFields = () => (
+  /* Rendered as a value, not declared as a component. Declared as a component
+     inside this function it got a new identity on every render, React threw
+     the old subtree away and mounted a fresh one, and the adjustment box lost
+     focus after every single character — the "one integer at a time" on the
+     change sheet. A value is just elements; React diffs them in place. */
+  const typeOptions = ["Amount", "Percent"];
+  const adjustmentFields = (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <Tabs
         items={[
@@ -445,9 +454,21 @@ export default function NewOrder() {
         <Select
           size="sm"
           label="Type"
-          options={["Percent", "Dollars"]}
+          options={typeOptions}
           value={ui.adjustType}
-          onChange={(e: any) => ui.set({ adjustType: e.target.value })}
+          onChange={(e: any) => {
+            const next = e.target.value as "Percent" | "Amount";
+            if (next === ui.adjustType) return;
+            /* Keep the same discount, express it the other way. Five percent
+               off $133 is $6.65; flipping the type should say so, not wipe the
+               box and make somebody work it out. */
+            if (adjustNum > 0 && goods > 0) {
+              const converted =
+                next === "Amount" ? (goods * adjustNum) / 100 : (adjustNum / goods) * 100;
+              setAdjustValue(String(Math.round(converted * 100) / 100));
+            }
+            ui.set({ adjustType: next });
+          }}
           style={{ width: 118, flexShrink: 0 }}
         />
       </div>
@@ -1047,7 +1068,7 @@ export default function NewOrder() {
                     No items yet. Tap a product to load it in.
                   </div>
                 )}
-                <AdjustmentFields />
+                {adjustmentFields}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 10, borderTop: "1px solid var(--border-subtle)" }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
                     <span style={{ fontSize: 12, color: "var(--text-faint)" }}>Lines</span>
@@ -1253,12 +1274,10 @@ export default function NewOrder() {
                                     }}
                                     allowUnset
                                   />
-                                  <Input
-                                    size="sm"
+                                  <MoneyField
                                     label="Fee"
-                                    value={draftFeeOf(d).toFixed(2)}
-                                    onChange={(e: any) => patchDraft(d.letter, { fee: Number(e.target.value) || 0, feeSource: "manual" })}
-                                    suffix="AUD"
+                                    value={draftFeeOf(d)}
+                                    onCommit={(n) => patchDraft(d.letter, { fee: n, feeSource: "manual" })}
                                   />
                                 </div>
                                 <Select
@@ -1435,7 +1454,7 @@ export default function NewOrder() {
                         record.
                       </div>
                     </div>
-                    <AdjustmentFields />
+                    {adjustmentFields}
                     <Input size="sm" label="PO number" value={ui.poNumber} onChange={(e: any) => ui.set({ poNumber: e.target.value })} placeholder="Customer's PO reference" />
                     <Textarea
                       size="sm"

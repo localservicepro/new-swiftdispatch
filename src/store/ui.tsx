@@ -47,7 +47,7 @@ interface UiState {
   yardWalkInName: string;
   orderContact: string | null;
   fulfilMethod: "delivery" | "pickup";
-  adjustType: "Percent" | "Dollars";
+  adjustType: "Percent" | "Amount";
   adjustDirection: "discount" | "surcharge";
   settleMethod: string | null;
   /* Whether the settlement method above was filled in by the app rather than
@@ -99,7 +99,10 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     yardWalkInName: "",
     orderContact: null as string | null,
     fulfilMethod: "delivery" as "delivery" | "pickup",
-    adjustType: "Percent" as "Percent" | "Dollars",
+    /* An amount, not a percentage. The yard prices a discount as "take five
+       dollars off", not "take five percent off", and the field was asking them
+       to convert every time. */
+    adjustType: "Amount" as "Percent" | "Amount",
     adjustDirection: "discount" as "discount" | "surcharge",
     settleMethod: null as string | null,
     settleMethodAuto: false,

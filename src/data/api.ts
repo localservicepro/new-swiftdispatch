@@ -139,9 +139,11 @@ export function setOrderItemQty(orderId: string, itemId: string, delta: number) 
   const items = s.orderItems[orderId] || [];
   const item = items.find((i) => i.id === itemId);
   if (!item) return;
-  const p = s.products.find((x) => x.id === item.product_id);
-  const u = unitFor(p);
-  const qty = Math.max(0, roundToStep(Number(item.qty) + delta * u.step, u));
+  /* By one, whatever the unit. The yard was clear twice over: the buttons have
+     always moved by one and a quarter-metre nudge was the surprise, not the
+     norm. And no snapping to a grid on the way — a line someone typed as 0.33
+     goes to 1.33, not to 1.25. */
+  const qty = Math.max(0, Math.round((Number(item.qty) + delta) * 1000) / 1000);
   if (qty <= 0) return removeOrderItem(orderId, itemId);
   const next = items.map((i) =>
     i.id === itemId ? { ...i, qty, line_total: Math.round(qty * Number(i.unit_price) * 100) / 100 } : i

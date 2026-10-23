@@ -108,16 +108,16 @@ export function invoiceSheet(input: InvoiceInput): string {
   const delivery = Math.round(sum((g) => feeFor(g.order)) * 100) / 100;
   const fuel =
     Math.round(sum((g) => (g.order.method === "delivery" ? Number(g.order.fuel_surcharge) || 0 : 0)) * 100) / 100;
-  const saleTotal = Math.round((goods + adjust + delivery + fuel) * 100) / 100;
+  /* The subtotal is the goods after any adjustment, because that is what a
+     subtotal is for: one metre of soil at $95 with five dollars off reads
+     Subtotal $90.00, not $95.00 with the discount somewhere else on the page.
+     The adjustment line sits above it so the arithmetic reads top to bottom. */
+  const subtotal = Math.round((goods + adjust) * 100) / 100;
 
-  /* The card surcharge is a settlement cost, so it only lands on an invoice the
-     customer is settling by card. Every other order prints the configured rate
-     against $0.00 — which is what their own invoices do. */
-  const cardRate = Number(paySettings?.card_surcharge) || 0;
-  const paysByCard = order.payment_method === "card" || order.payment_method === "card_on_file";
-  const surcharge = paysByCard ? Math.round(saleTotal * cardRate) / 100 : 0;
-
-  const total = Math.round((saleTotal + surcharge) * 100) / 100;
+  /* No card surcharge any more — surcharging has been banned, so the line is
+     gone and the Sale Total it existed to distinguish itself from went with
+     it. Total is the subtotal plus whatever delivery cost. */
+  const total = Math.round((subtotal + delivery + fuel) * 100) / 100;
   const gstOn = paySettings ? paySettings.gst_on : true;
   const gstRate = Number(paySettings?.gst_rate) || 10;
   const gst = gstOn ? Math.round((total - total / (1 + gstRate / 100)) * 100) / 100 : 0;
@@ -216,12 +216,11 @@ export function invoiceSheet(input: InvoiceInput): string {
     </table>
 
     <table class="totals">
-      ${totalRow("Price Adjustment", (adjust < 0 ? "−" : "") + AUD(Math.abs(adjust)))}
-      ${totalRow("Subtotal", AUD(goods))}
+      ${adjust ? totalRow("Goods", AUD(goods)) : ""}
+      ${adjust ? totalRow("Price Adjustment", (adjust < 0 ? "−" : "+") + AUD(Math.abs(adjust))) : ""}
+      ${totalRow("Subtotal", AUD(subtotal))}
       ${delivery ? totalRow(`Delivery${deliveryWhere ? ` (${deliveryWhere})` : ""}`, AUD(delivery)) : ""}
       ${fuel ? totalRow("Fuel Surcharge", AUD(fuel)) : ""}
-      ${totalRow("Sale Total", AUD(saleTotal))}
-      ${totalRow(`Surcharge ${cardRate}%`, AUD(surcharge))}
       ${gstOn ? totalRow(`${esc(paySettings?.gst_label || "GST")} included`, AUD(gst), "gst") : ""}
       ${totalRow("Total", AUD(total), "grand")}
     </table>

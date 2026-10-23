@@ -27,6 +27,29 @@ import { useViewport } from "../lib/viewport";
    always the real ones — this only bounds how much of a lane becomes DOM. */
 const LANE_PAGE = 100;
 
+const PERIODS = ["Today", "This week", "This month", "All time"] as const;
+type Period = (typeof PERIODS)[number];
+const SORTS = ["Delivery time — oldest first", "Placed — newest first", "Value — highest first"] as const;
+type SortBy = (typeof SORTS)[number];
+
+const inPeriodFactory = (period: Period) => {
+  if (period === "All time") return () => true;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === "This week") start.setDate(start.getDate() - start.getDay());
+  if (period === "This month") start.setDate(1);
+  const end = new Date(start);
+  if (period === "Today") end.setDate(end.getDate() + 1);
+  if (period === "This week") end.setDate(end.getDate() + 7);
+  if (period === "This month") end.setMonth(end.getMonth() + 1);
+  const from = start.getTime();
+  const to = end.getTime();
+  return (o: Order) => {
+    const t = o.delivery_date ? new Date(o.delivery_date + "T00:00:00").getTime() : new Date(o.placed_at).getTime();
+    return t >= from && t < to;
+  };
+};
+
 export default function Board() {
   const ui = useUi();
   const { tight } = useViewport();
@@ -39,6 +62,12 @@ export default function Board() {
   const [shown, setShown] = useState<Partial<Record<OrderStatus, number>>>({});
   const [assignTruck, setAssignTruck] = useState<string>("");
   const [assignDriver, setAssignDriver] = useState<string>("");
+  /* These two controls had been on the screen since the first build with
+     handlers that did nothing. Wired now: the period narrows by delivery date
+     (an order with no date yet goes under the day it was placed), the sort
+     reorders every lane. */
+  const [period, setPeriod] = useState<Period>("All time");
+  const [sortBy, setSortBy] = useState<SortBy>(SORTS[0]);
 
   const live = useMemo(
     () => orders.filter((o) => !o.deleted_at && o.kind !== "master" && o.status !== "cancelled" && o.status !== "ready_for_pickup"),
@@ -97,10 +126,17 @@ export default function Board() {
   let boardCount = 0;
   let boardValue = 0;
 
+  const inPeriod = useMemo(() => inPeriodFactory(period), [period]);
+  const compare = (a: Order, b: Order) => {
+    if (sortBy === "Placed — newest first") return Date.parse(b.placed_at) - Date.parse(a.placed_at);
+    if (sortBy === "Value — highest first") return totalOf(b) - totalOf(a);
+    return deliverySortKey(a) - deliverySortKey(b);
+  };
+
   const lanes = LANES.map((lane) => {
     const all = live
-      .filter((o) => lane.statuses.includes(o.status) && matches(o))
-      .sort((a, b) => deliverySortKey(a) - deliverySortKey(b));
+      .filter((o) => lane.statuses.includes(o.status) && inPeriod(o) && matches(o))
+      .sort(compare);
     const value = all.reduce((s, c) => s + totalOf(c), 0);
     boardCount += all.length;
     boardValue += value;
@@ -226,12 +262,18 @@ export default function Board() {
             onChange={(e: any) => setQuery(e.target.value)}
           />
         </div>
-        <Select size="sm" options={["Today", "This week", "This month", "All time"]} value="All time" onChange={() => {}} style={{ width: 130, flexShrink: 0 }} />
         <Select
           size="sm"
-          options={["Delivery time — oldest first", "Placed — newest first", "Value — highest first"]}
-          value="Delivery time — oldest first"
-          onChange={() => {}}
+          options={PERIODS as unknown as string[]}
+          value={period}
+          onChange={(e: any) => setPeriod(e.target.value as Period)}
+          style={{ width: 130, flexShrink: 0 }}
+        />
+        <Select
+          size="sm"
+          options={SORTS as unknown as string[]}
+          value={sortBy}
+          onChange={(e: any) => setSortBy(e.target.value as SortBy)}
           style={{ width: 240, flexShrink: 0 }}
         />
         {legend}

@@ -50,6 +50,7 @@ import MyobPushButton from "./MyobPushButton";
 import ProductSearchAdd from "./ProductSearchAdd";
 import { PickerField } from "./DateWindowPicker";
 import Confirm from "./Confirm";
+import MoneyField from "./MoneyField";
 
 export default function OrderDrawer() {
   const ui = useUi();
@@ -417,14 +418,10 @@ export default function OrderDrawer() {
                                 patchSplit(s.id, { suburb_id: e.target.value || null, delivery_fee: r.total, fee_source: "suburb" }, "address");
                               }}
                             />
-                            <Input
-                              size="sm"
+                            <MoneyField
                               label="Delivery fee"
-                              value={String(feeOf(s, suburbs, paySettings).toFixed(2))}
-                              onChange={(e: any) =>
-                                patchSplit(s.id, { delivery_fee: Number(e.target.value) || 0, fee_source: "manual" }, "address")
-                              }
-                              suffix="AUD"
+                              value={feeOf(s, suburbs, paySettings)}
+                              onCommit={(n) => patchSplit(s.id, { delivery_fee: n, fee_source: "manual" }, "address")}
                             />
                           </div>
                           <div style={{ fontSize: 11, color: "var(--text-faint)" }}>{feeNote(s)}</div>
@@ -701,12 +698,10 @@ export default function OrderDrawer() {
                               }}
                               allowUnset
                             />
-                            <Input
-                              size="sm"
+                            <MoneyField
                               label="Delivery fee"
-                              value={feeOf(editTarget, suburbs, paySettings).toFixed(2)}
-                              onChange={(e: any) => patchOrder(editTarget.id, { delivery_fee: Number(e.target.value) || 0, fee_source: "manual" })}
-                              suffix="AUD"
+                              value={feeOf(editTarget, suburbs, paySettings)}
+                              onCommit={(n) => patchOrder(editTarget.id, { delivery_fee: n, fee_source: "manual" })}
                             />
                           </div>
                           <div
