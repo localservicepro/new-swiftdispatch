@@ -6,7 +6,7 @@ N.orders = 24; N.order_items = 72;
 const OUT = (process.env.DEMO_OUT || new URL('./raw/', import.meta.url).pathname).replace(/\/?$/, '/');
 fs.rmSync(OUT, { recursive: true, force: true }); fs.mkdirSync(OUT, { recursive: true });
 
-const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+const b = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/opt/pw-browsers/chromium' });
 const ctx = await b.newContext({ viewport: { width: 1600, height: 900 }, recordVideo: { dir: OUT, size: { width: 1600, height: 900 } }, colorScheme: 'dark' });
 const p = await ctx.newPage();
 const t0 = Date.now();
