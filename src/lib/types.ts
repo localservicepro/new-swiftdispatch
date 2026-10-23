@@ -249,6 +249,11 @@ export interface Order {
   /* Manual position within its board column, lowest first. Null means the
      delivery time decides. Cleared when the order changes stage. */
   board_rank: number | null;
+  /* When someone marked it paid (or a payment landed). Null while unpaid. */
+  paid_at: string | null;
+  /* The total when the order was taken, so an edit afterwards can show
+     "was / now / difference". Not used for billing. */
+  booked_total: number | null;
   payment_status: PaymentStatus;
   po_number: string | null;
   order_notes: string | null;

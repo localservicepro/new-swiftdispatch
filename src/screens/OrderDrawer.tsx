@@ -34,6 +34,8 @@ import {
   setOrderItemQtyTo,
   setOrderItemBackorder,
   deleteOrder,
+  markOrderPaid,
+  markOrderUnpaid,
 } from "../data/api";
 import {
   AddressBlock,
@@ -88,7 +90,11 @@ export default function OrderDrawer() {
   const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
   const combined = master ? splits.reduce((s, x) => s + totalOf(x), 0) + goodsOf(orderItems[master.id] || []) : 0;
 
-  const validTabs = isMaster ? ["splits", "items", "delivery", "customer", "payment"] : ["items", "delivery", "customer", "payment"];
+  /* Payment lives on the Items tab for a single order — the yard asked for
+     the two to be one, since the totals were half on each. A master keeps a
+     Payment tab because it is the only place its deliveries are totalled
+     together. */
+  const validTabs = isMaster ? ["splits", "items", "delivery", "customer", "payment"] : ["items", "delivery", "customer"];
   const tab = validTabs.includes(ui.drawerTab) ? ui.drawerTab : validTabs[0];
 
   const suburbName = (id: string | null) => suburbs.find((s) => s.id === id)?.name || "";
@@ -302,7 +308,7 @@ export default function OrderDrawer() {
                   { id: "items", label: "Items", count: items.length } as any,
                   { id: "delivery", label: "Delivery" } as any,
                   { id: "customer", label: "Customer" } as any,
-                  { id: "payment", label: "Payment" } as any,
+                  ...(isMaster ? [{ id: "payment", label: "Payment" } as any] : []),
                 ])}
                 activeId={tab}
                 onSelect={(id: string) => ui.set({ drawerTab: id })}
@@ -582,9 +588,70 @@ export default function OrderDrawer() {
                             {AUD(totalOf(editTarget))}
                           </span>
                         </div>
+                        {/* What it was booked at, when that is no longer what it
+                            comes to. The yard asked to see the old total and
+                            the difference next to the new one. */}
+                        {editTarget.booked_total !== null &&
+                          editTarget.booked_total !== undefined &&
+                          Math.abs(Number(editTarget.booked_total) - totalOf(editTarget)) >= 0.005 && (
+                            <div className="tabular" style={{ display: "flex", justifyContent: "flex-end", gap: 10, fontSize: 12, color: "var(--text-muted)" }}>
+                              <span>Booked at {AUD(Number(editTarget.booked_total))}</span>
+                              <span style={{ fontWeight: 600, color: totalOf(editTarget) - Number(editTarget.booked_total) < 0 ? "var(--feedback-success)" : "var(--attention)" }}>
+                                {totalOf(editTarget) - Number(editTarget.booked_total) < 0 ? "−" : "+"}
+                                {AUD(Math.abs(totalOf(editTarget) - Number(editTarget.booked_total)))}
+                              </span>
+                            </div>
+                          )}
                       </div>
                     </div>
                   </Card>
+
+                  {!isMaster && sel && (
+                    <>
+                      <PaymentSummary {...paymentSummaryProps(sel)} />
+                      <Card title="Settlement" padding="default">
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          <Select
+                            size="sm"
+                            label="Settlement method"
+                            options={
+                              sel.payment_method && !PAYMENT_METHODS.some((m) => m.value === sel.payment_method)
+                                ? [...PAYMENT_METHODS, { value: sel.payment_method, label: PAYMENT_METHOD_LABEL[sel.payment_method] || sel.payment_method }]
+                                : PAYMENT_METHODS
+                            }
+                            value={sel.payment_method || ""}
+                            onChange={(e: any) => patchOrder(sel.id, { payment_method: (e.target.value || null) as Order["payment_method"] })}
+                            allowUnset
+                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                            {sel.payment_status === "paid" ? (
+                              <>
+                                <StatusBadge kind="payment" value="paid" />
+                                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                                  {sel.paid_at ? `Marked paid ${placedText(sel.paid_at)}` : "Paid"}
+                                </span>
+                                <div style={{ flex: 1 }} />
+                                <Button variant="ghost" size="sm" iconLeft="rotate-ccw" onClick={() => markOrderUnpaid(sel.id)}>
+                                  Mark unpaid
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <StatusBadge kind="payment" value={sel.payment_status} />
+                                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                                  {sel.payment_status === "invoiced" ? "On the account — settles by statement" : "Not yet paid"}
+                                </span>
+                                <div style={{ flex: 1 }} />
+                                <Button variant="secondary" size="sm" iconLeft="circle-check" onClick={() => markOrderPaid(sel.id)}>
+                                  Mark as paid
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    </>
+                  )}
 
                   <Card title="Notes" padding="default">
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -812,27 +879,6 @@ export default function OrderDrawer() {
               {tab === "payment" && (
                 <>
                   {isMaster && masterSummaryProps && <PaymentSummary {...masterSummaryProps} />}
-                  {!isMaster && sel && <PaymentSummary {...paymentSummaryProps(sel)} />}
-                  {/* The method can be changed after the fact — an order taken
-                      as card and paid in the yard is not a rare thing. A legacy
-                      value from the old system stays choosable on the order
-                      that carries it and nowhere else. */}
-                  {!isMaster && sel && (
-                    <Card title="Settlement" padding="default">
-                      <Select
-                        size="sm"
-                        label="Settlement method"
-                        options={
-                          sel.payment_method && !PAYMENT_METHODS.some((m) => m.value === sel.payment_method)
-                            ? [...PAYMENT_METHODS, { value: sel.payment_method, label: PAYMENT_METHOD_LABEL[sel.payment_method] || sel.payment_method }]
-                            : PAYMENT_METHODS
-                        }
-                        value={sel.payment_method || ""}
-                        onChange={(e: any) => patchOrder(sel.id, { payment_method: (e.target.value || null) as Order["payment_method"] })}
-                        allowUnset
-                      />
-                    </Card>
-                  )}
                 </>
               )}
             </div>

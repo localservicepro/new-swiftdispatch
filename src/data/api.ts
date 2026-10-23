@@ -394,10 +394,18 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
   ((insertedItems || []) as OrderItem[]).forEach((i) => {
     (byOrder[i.order_id] = byOrder[i.order_id] || []).push(i);
   });
+  /* What it was booked at, so a later edit can show the difference. */
+  const st0 = S();
+  const booked = newOrders.map((o) => ({ id: o.id, total: Math.round(orderTotal(o, byOrder[o.id] || [], st0.suburbs, st0.paySettings) * 100) / 100 }));
+  const bookedById = new Map(booked.map((b) => [b.id, b.total]));
+  newOrders.forEach((o) => {
+    o.booked_total = bookedById.get(o.id) ?? null;
+  });
   set((st) => ({
     orders: [...st.orders, ...newOrders],
     orderItems: { ...st.orderItems, ...byOrder },
   }));
+  booked.forEach((b) => persist(supabase.from("orders").update({ booked_total: b.total }).eq("id", b.id), "the order"));
   logActivity("order", newOrders[0]?.id || null, "created:" + baseNumber);
   /* Remember where this went, so next time it is a tap rather than a retype. */
   if (input.customer && input.method === "delivery") {
@@ -407,6 +415,53 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
      a status change, so auto-push has to be offered its one chance here. */
   if (input.mode === "yardsale") newOrders.forEach((o) => void autoPushToMyob(o.id));
   return newOrders.find((o) => o.kind !== "split") || newOrders[0] || null;
+}
+
+/* Paid, by hand. The status was set once when the order was taken and nothing
+   could change it afterwards, so a trade customer who paid at the counter was
+   "pending" for ever. Marking it paid stamps the order and writes a payments
+   row for the amount, so the Payments screen's "received today" is right.
+   Unmarking takes the manual row back out and returns the status to what the
+   billing relationship implies. */
+export function markOrderPaid(id: string) {
+  const s = S();
+  const o = s.orders.find((x) => x.id === id);
+  if (!o) return;
+  const amount = Math.round(orderTotal(o, s.orderItems[id] || [], s.suburbs, s.paySettings) * 100) / 100;
+  const now = new Date().toISOString();
+  const row = {
+    id: uuid(),
+    order_id: id,
+    customer_id: o.customer_id,
+    amount,
+    method: o.payment_method,
+    status: "paid" as const,
+    reference: "manual:" + (s.user?.name || "admin"),
+    paid_at: now,
+    created_at: now,
+  };
+  set((st) => ({
+    orders: st.orders.map((x) => (x.id === id ? { ...x, payment_status: "paid", paid_at: now } : x)),
+    payments: [row as any, ...st.payments],
+  }));
+  persist(supabase.from("orders").update({ payment_status: "paid", paid_at: now }).eq("id", id), "the order");
+  persist(supabase.from("payments").insert(row), "the payment");
+  logActivity("order", id, "paid:manual");
+}
+
+export function markOrderUnpaid(id: string) {
+  const s = S();
+  const o = s.orders.find((x) => x.id === id);
+  if (!o) return;
+  const status: Order["payment_status"] = o.payment_type && o.payment_type !== "prepaid" ? "invoiced" : "pending";
+  const manual = s.payments.filter((p) => p.order_id === id && (p.reference || "").startsWith("manual:"));
+  set((st) => ({
+    orders: st.orders.map((x) => (x.id === id ? { ...x, payment_status: status, paid_at: null } : x)),
+    payments: st.payments.filter((p) => !manual.some((m) => m.id === p.id)),
+  }));
+  persist(supabase.from("orders").update({ payment_status: status, paid_at: null }).eq("id", id), "the order");
+  if (manual.length) persist(supabase.from("payments").delete().in("id", manual.map((m) => m.id)), "the payment");
+  logActivity("order", id, "unpaid:manual");
 }
 
 /* Deleting an order sets a date; the row stays (house rule — history that other
