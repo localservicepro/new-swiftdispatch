@@ -198,6 +198,9 @@ export interface OrderItem {
   qty: number;
   unit_price: number;
   line_total: number;
+  /* Held for a later delivery. The line stays on the order and in its total;
+     the run sheet lists it as not on this load. */
+  backordered: boolean;
 }
 
 export interface Order {

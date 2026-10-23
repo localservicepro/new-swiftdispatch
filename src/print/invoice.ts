@@ -148,7 +148,7 @@ export function invoiceSheet(input: InvoiceInput): string {
 
   const itemRow = (it: OrderItem) => {
     const p = products.find((x) => x.id === it.product_id);
-    const name = [p?.name || it.description || "Item", p?.unit].filter(Boolean).join(" ");
+    const name = [p?.name || it.description || "Item", p?.unit].filter(Boolean).join(" ") + (it.backordered ? " — on backorder" : "");
     return `<tr>
         <td class="prod">${esc(name)}</td>
         <td class="qty">${esc(qty(Number(it.qty)))}</td>

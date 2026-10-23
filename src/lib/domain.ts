@@ -207,7 +207,7 @@ export const itemsText = (items: OrderItem[], productById: Map<string, Product>)
   items
     .map((i) => {
       const p = i.product_id ? productById.get(i.product_id) : undefined;
-      return `${qtyText(Number(i.qty), p?.unit || "each")} ${p?.name || i.description || "Item"}`;
+      return `${qtyText(Number(i.qty), p?.unit || "each")} ${p?.name || i.description || "Item"}${i.backordered ? " (backorder)" : ""}`;
     })
     .join(" · ");
 

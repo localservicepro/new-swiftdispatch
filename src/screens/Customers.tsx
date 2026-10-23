@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store/store";
 import HistoryNotice from "./HistoryNotice";
 import NewCustomerModal from "./NewCustomerModal";
+import { ContactsEditor, CustomerDetails } from "./CustomerDetails";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, suburbRate } from "../lib/domain";
 import type { Customer, CustomerSite, Suburb } from "../lib/types";
@@ -511,65 +512,7 @@ function CustomerDrawer(props: {
 
         {tab === "overview" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <Card title="How this customer is set up" padding="default">
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
-                <Select size="sm" label="Who they are" options={["Individual", "Sole trader", "Company"]} value={cust.entity} onChange={(e: any) => patchCustomer(cust.id, { entity: e.target.value })} />
-                <Select size="sm" label="What they pay" options={["Retail", "Trade"]} value={cust.tier} onChange={(e: any) => patchCustomer(cust.id, { tier: e.target.value })} />
-                <Select
-                  size="sm"
-                  label="How they settle"
-                  options={[
-                    { value: "prepaid", label: "Prepaid" },
-                    { value: "account", label: "Account" },
-                  ]}
-                  value={cust.billing}
-                  onChange={(e: any) =>
-                    patchCustomer(cust.id, {
-                      billing: e.target.value,
-                      terms_days: e.target.value === "account" ? cust.terms_days || 30 : null,
-                    })
-                  }
-                />
-              </div>
-            </Card>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 12, alignItems: "start" }}>
-              <Card title={cust.entity === "Individual" ? "Person" : "Business"} subtitle={cust.entity === "Individual" ? "No ABN held" : "ABN " + (cust.abn || "—")} padding="default">
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {[
-                    { label: "Legal name", value: cust.name },
-                    { label: "ABN", value: cust.abn || "—" },
-                    { label: "Account number", value: cust.account_number },
-                    { label: "Customer since", value: dmy(cust.customer_since) },
-                  ].map((r) => (
-                    <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13 }}>
-                      <span style={{ color: "var(--text-faint)" }}>{r.label}</span>
-                      <span style={{ color: "var(--text-primary)", textAlign: "right" }}>{r.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-
-              <AddressBlock
-                label={cust.billing === "account" ? "Invoices go to" : "Billing address"}
-                street={cust.billing_street || ""}
-                suburb={suburbName(cust.billing_suburb_id)}
-                postcode={billRate.postcode}
-                suburbId={billRate.id}
-                deliveryFee={AUD(billRate.fee)}
-                deliveryFeeSource="suburb"
-                source="customer"
-                verified
-                onOpenMap={() =>
-                  window.open(
-                    "https://www.google.com/maps/search/" +
-                      encodeURIComponent(`${cust.billing_street || ""} ${suburbName(cust.billing_suburb_id)} VIC ${billRate.postcode}`),
-                    "_blank"
-                  )
-                }
-                onChange={() => {}}
-              />
-            </div>
+            <CustomerDetails cust={cust} />
 
             {cust.billing === "account" && (
               <Card title="Customer portal" subtitle="Log in with just a PIN — no password" padding="default">
@@ -687,69 +630,7 @@ function CustomerDrawer(props: {
 
         {tab === "contacts" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {cust.entity === "Individual" && (
-              <Alert tone="info" title="An individual has one contact">
-                Switch "Who they are" to a business on the Overview tab if several people need to order or receive
-                invoices.
-              </Alert>
-            )}
-            <Card
-              title="Contacts"
-              subtitle={cust.entity === "Individual" ? "One person on the account" : `${cust.contacts.length} people can act on this account`}
-              padding="default"
-            >
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {cust.contacts.map((ct) => (
-                  <div key={ct.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 10, borderRadius: 8, background: "var(--surface-raised)", flexWrap: "wrap" }}>
-                    <div style={{ flex: "1 1 160px", minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {ct.name}
-                      </div>
-                      <div className="tabular" style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                        {(ct.phone || "—") + " · " + (ct.email || "no email")}
-                      </div>
-                    </div>
-                    {ct.roles.map((r) => (
-                      <Badge key={r} tone={r === "Accounts" ? "brand" : r === "Site" ? "neutral" : "info"} outline>
-                        {r}
-                      </Badge>
-                    ))}
-                    <div onClick={() => removeContact(cust.id, ct.id)} title="Remove contact" style={{ cursor: "pointer", width: 24, height: 24, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, border: "1px solid var(--border-default)", color: "var(--text-muted)" }}>
-                      <Icon name="trash-2" size={12} />
-                    </div>
-                  </div>
-                ))}
-                {cust.entity !== "Individual" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10, borderRadius: 8, border: "1px dashed var(--border-default)" }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8 }}>
-                      <Input size="sm" label="Name" value={newContact.name} onChange={(e: any) => setNewContact({ ...newContact, name: e.target.value })} placeholder="e.g. Marcus Hale" />
-                      <Input size="sm" label="Phone (optional)" value={newContact.phone} onChange={(e: any) => setNewContact({ ...newContact, phone: e.target.value })} placeholder="0412 000 000" />
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8, alignItems: "end" }}>
-                      <Input size="sm" label="Email (optional)" value={newContact.email} onChange={(e: any) => setNewContact({ ...newContact, email: e.target.value })} placeholder="name@business.com.au" />
-                      <Select size="sm" label="Role" options={["Orders", "Accounts", "Site"]} value={newContact.role} onChange={(e: any) => setNewContact({ ...newContact, role: e.target.value })} />
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      iconLeft="plus"
-                      disabled={!newContact.name.trim()}
-                      onClick={() => {
-                        addContact(cust.id, {
-                          name: newContact.name.trim(),
-                          phone: newContact.phone.trim() || null,
-                          email: newContact.email.trim() || null,
-                          roles: [newContact.role],
-                        });
-                        setNewContact({ name: "", phone: "", email: "", role: "Orders" });
-                      }}
-                    >
-                      Add contact
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </Card>
+            <ContactsEditor cust={cust} />
           </div>
         )}
 

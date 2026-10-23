@@ -15,6 +15,7 @@ import {
   unitFor,
   dmy,
   isoFromDmy,
+  customerBadgeType,
 } from "../lib/domain";
 import { PAYMENT_METHOD_LABEL, PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
 import {
@@ -29,6 +30,7 @@ import {
   resetSplitToMaster,
   setOrderItemQty,
   setOrderItemQtyTo,
+  setOrderItemBackorder,
   deleteOrder,
 } from "../data/api";
 import {
@@ -51,6 +53,7 @@ import ProductSearchAdd from "./ProductSearchAdd";
 import { PickerField } from "./DateWindowPicker";
 import Confirm from "./Confirm";
 import MoneyField from "./MoneyField";
+import { ContactsEditor, CustomerDetails } from "./CustomerDetails";
 
 export default function OrderDrawer() {
   const ui = useUi();
@@ -83,7 +86,7 @@ export default function OrderDrawer() {
   const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
   const combined = master ? splits.reduce((s, x) => s + totalOf(x), 0) + goodsOf(orderItems[master.id] || []) : 0;
 
-  const validTabs = isMaster ? ["splits", "items", "delivery", "payment"] : ["items", "delivery", "payment"];
+  const validTabs = isMaster ? ["splits", "items", "delivery", "customer", "payment"] : ["items", "delivery", "customer", "payment"];
   const tab = validTabs.includes(ui.drawerTab) ? ui.drawerTab : validTabs[0];
 
   const suburbName = (id: string | null) => suburbs.find((s) => s.id === id)?.name || "";
@@ -202,8 +205,17 @@ export default function OrderDrawer() {
           display: "flex",
           flexDirection: "column",
           transform: `translateX(${open ? "0%" : "105%"})`,
-          transition: "transform 320ms cubic-bezier(.16,1,.3,1)",
+          /* Hidden as well as slid away. The closed drawer kept its fields in
+             the tab order and reachable by a horizontal scroll, so Tab from the
+             Customers screen could land in an order nobody could see. The
+             visibility flip waits for the slide out and is immediate on the
+             way in. */
+          visibility: open ? "visible" : "hidden",
+          transition: open
+            ? "transform 320ms cubic-bezier(.16,1,.3,1)"
+            : "transform 320ms cubic-bezier(.16,1,.3,1), visibility 0s linear 320ms",
         }}
+        aria-hidden={!open}
       >
         {focus && (
           <>
@@ -287,6 +299,7 @@ export default function OrderDrawer() {
                 items={(isMaster ? [{ id: "splits", label: "Splits", count: splits.length }] : []).concat([
                   { id: "items", label: "Items", count: items.length } as any,
                   { id: "delivery", label: "Delivery" } as any,
+                  { id: "customer", label: "Customer" } as any,
                   { id: "payment", label: "Payment" } as any,
                 ])}
                 activeId={tab}
@@ -498,8 +511,13 @@ export default function OrderDrawer() {
                         return (
                           <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: "var(--surface-raised)" }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {p?.name || it.description}
+                              <div style={{ fontSize: 13, color: it.backordered ? "var(--text-muted)" : "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{p?.name || it.description}</span>
+                                {it.backordered && (
+                                  <Badge tone="warning" icon="hourglass">
+                                    Backorder
+                                  </Badge>
+                                )}
                               </div>
                               <div className="tabular" style={{ fontSize: 11, color: "var(--text-faint)" }}>
                                 {(p?.sku || "—") + " · " + AUD(Number(it.unit_price)) + " per " + (p?.unit || "each")}
@@ -520,6 +538,16 @@ export default function OrderDrawer() {
                                 onCommit={(n) => setOrderItemQtyTo(editTarget.id, it.id, n)}
                               />
                               <QtyBtn label="+" onClick={() => setOrderItemQty(editTarget.id, it.id, 1)} size={24} />
+                              {/* Hold just this line back. The old app could only
+                                  backorder the whole order; the yard wanted the rock
+                                  to go today and the cement to follow. */}
+                              <div
+                                onClick={() => setOrderItemBackorder(editTarget.id, it.id, !it.backordered)}
+                                title={it.backordered ? "Release — put it back on this load" : "Backorder — hold this line for a later delivery"}
+                                style={{ ...qtyBtnStyle, width: 24, height: 24, color: it.backordered ? "var(--feedback-warning)" : undefined }}
+                              >
+                                <Icon name={it.backordered ? "package-check" : "hourglass"} size={12} />
+                              </div>
                               <div onClick={() => removeOrderItem(editTarget.id, it.id)} title="Remove line" style={{ ...qtyBtnStyle, width: 24, height: 24 }}>
                                 <Icon name="trash-2" size={12} />
                               </div>
@@ -532,6 +560,16 @@ export default function OrderDrawer() {
                       })}
 
                       <ProductSearchAdd onAdd={(pid) => addOrderItem(editTarget.id, pid)} label="Add a product" />
+
+                      {items.some((i) => i.backordered) && (
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, color: "var(--feedback-warning)", textWrap: "pretty" as any }}>
+                          <Icon name="hourglass" size={12} />
+                          <span>
+                            {items.filter((i) => i.backordered).length === 1 ? "One line is" : `${items.filter((i) => i.backordered).length} lines are`} on
+                            backorder — held for a later delivery, marked "do not load" on the run sheet, still on this order and its total.
+                          </span>
+                        </div>
+                      )}
 
                       <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingTop: 8, borderTop: "1px solid var(--border-subtle)" }}>
                         <Row label="Goods" value={AUD(goodsOf(items))} />
@@ -719,6 +757,53 @@ export default function OrderDrawer() {
                       )}
                     </div>
                   </Card>
+                </div>
+              )}
+
+              {tab === "customer" && focus && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {customer ? (
+                    <>
+                      <Card title={customer.name} subtitle={`Acct ${customer.account_number} · ${customer.entity} · ${customer.tier} pricing · ${customer.billing === "account" ? `${customer.terms_days} days account` : "prepaid"}`} padding="default">
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <StatusBadge kind="customer" value={customerBadgeType(customer)} />
+                          {customer.stop_credit && (
+                            <Badge tone="danger" icon="circle-alert">
+                              Stop credit
+                            </Badge>
+                          )}
+                          {customer.billing === "account" && (
+                            <span className="tabular" style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                              Balance {AUD(Number(customer.balance))} of {AUD(Number(customer.credit_limit))} limit
+                            </span>
+                          )}
+                          <div style={{ flex: 1 }} />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            iconLeft="external-link"
+                            onClick={() => {
+                              ui.set({ custId: customer.id, custTab: "overview" });
+                              ui.navigateTo("customers");
+                            }}
+                          >
+                            Open in Customers
+                          </Button>
+                        </div>
+                      </Card>
+                      {/* The same editor as the Customers screen. A phone number
+                          corrected here is corrected on the record. */}
+                      <CustomerDetails cust={customer} />
+                      <ContactsEditor cust={customer} />
+                    </>
+                  ) : (
+                    <Card title={focus.walk_in_name || "Walk-in"} subtitle="No customer record" padding="default">
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", textWrap: "pretty" as any }}>
+                        This order was taken for a walk-in, so there is nothing on file beyond the name. Add them under Customers
+                        if they are likely to be back.
+                      </div>
+                    </Card>
+                  )}
                 </div>
               )}
 

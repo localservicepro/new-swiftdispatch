@@ -188,6 +188,20 @@ export function removeOrderItem(orderId: string, itemId: string) {
   markItemsOverridden(orderId);
 }
 
+/* Hold one line back without touching the rest of the order. The old app could
+   only backorder the whole order; the yard wants the rock to go out today and
+   the cement that has not landed to follow. The line keeps its price and stays
+   in the total — it is still sold — it just does not go on this load. */
+export function setOrderItemBackorder(orderId: string, itemId: string, backordered: boolean) {
+  set((st) => ({
+    orderItems: {
+      ...st.orderItems,
+      [orderId]: (st.orderItems[orderId] || []).map((i) => (i.id === itemId ? { ...i, backordered } : i)),
+    },
+  }));
+  persist(supabase.from("order_items").update({ backordered }).eq("id", itemId), "the line");
+}
+
 export function addOrderItem(orderId: string, productId: string) {
   const s = S();
   const p = s.products.find((x) => x.id === productId);
@@ -206,6 +220,7 @@ export function addOrderItem(orderId: string, productId: string) {
     qty: u.min,
     unit_price: price,
     line_total: Math.round(u.min * price * 100) / 100,
+    backordered: false,
   };
   set((st) => ({ orderItems: { ...st.orderItems, [orderId]: [...items, row] } }));
   persist(
@@ -674,6 +689,15 @@ export function addContact(customerId: string, c: Omit<CustomerContact, "id" | "
   }));
   persist(supabase.from("customer_contacts").insert(row), "the contact");
   return row;
+}
+
+export function patchContact(customerId: string, contactId: string, patch: Partial<Omit<CustomerContact, "id" | "customer_id">>) {
+  set((s) => ({
+    customers: s.customers.map((x) =>
+      x.id === customerId ? { ...x, contacts: x.contacts.map((ct) => (ct.id === contactId ? { ...ct, ...patch } : ct)) } : x
+    ),
+  }));
+  persist(supabase.from("customer_contacts").update(patch).eq("id", contactId), "the contact");
 }
 
 export function removeContact(customerId: string, contactId: string) {

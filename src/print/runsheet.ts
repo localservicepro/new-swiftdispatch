@@ -95,10 +95,15 @@ function sheet(
     ? g.items
         .map((i) => {
           const p = products.find((x) => x.id === i.product_id);
-          return `<tr>
-            <td class="tick"></td>
+          /* A backordered line is printed, struck and labelled, rather than
+             left off: the driver should know the customer is expecting it and
+             not load it, and the customer signing the sheet should see it was
+             not forgotten. */
+          const bo = !!i.backordered;
+          return `<tr${bo ? ' class="bo"' : ""}>
+            <td class="tick">${bo ? "B/O" : ""}</td>
             <td class="qty">${esc(qtyText(Number(i.qty), p?.unit || "each"))}</td>
-            <td class="prod">${esc(p?.name || i.description || "Item")}</td>
+            <td class="prod">${esc(p?.name || i.description || "Item")}${bo ? ' <span class="bo-tag">Backorder — do not load</span>' : ""}</td>
             <td class="price">${esc(AUD(Number(i.unit_price)))} <span class="per">/ ${esc(p?.unit || "each")}</span></td>
           </tr>`;
         })
@@ -202,6 +207,11 @@ const STYLE = `
   table.goods td.price { font-size: 12px; width: 130px; text-align: right; white-space: nowrap; }
   table.goods td.price .per { font-size: 10px; color: #555; }
   table.goods th.tick, table.goods td.tick { width: 34px; }
+  table.goods tr.bo td { color: #777; }
+  table.goods tr.bo td.qty, table.goods tr.bo td.prod { text-decoration: line-through; }
+  table.goods tr.bo td.tick { font-size: 9px; font-weight: bold; letter-spacing: .04em; }
+  table.goods tr.bo td.tick::before { content: none; }
+  table.goods tr.bo td.prod .bo-tag { text-decoration: none; display: inline-block; margin-left: 6px; font-size: 9px; font-weight: bold; text-transform: uppercase; letter-spacing: .06em; border: 1px solid #777; border-radius: 3px; padding: 1px 5px; }
   table.goods td.tick::before {
     content: ""; display: block; width: 17px; height: 17px; border: 1.5px solid #000;
   }

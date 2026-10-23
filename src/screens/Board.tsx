@@ -476,6 +476,25 @@ export default function Board() {
                             {PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method}
                           </div>
                         )}
+                        {(orderItems[o.id] || []).some((i) => i.backordered) && (
+                          <div
+                            title="These lines are held for a later delivery and are left off the run sheet"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 5,
+                              padding: "2px 10px 4px",
+                              fontSize: 11,
+                              color: "var(--feedback-warning)",
+                            }}
+                          >
+                            <Icon name="hourglass" size={11} />
+                            {(() => {
+                              const n = (orderItems[o.id] || []).filter((i) => i.backordered).length;
+                              return n === 1 ? "1 line on backorder" : `${n} lines on backorder`;
+                            })()}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
