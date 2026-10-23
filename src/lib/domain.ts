@@ -417,3 +417,49 @@ export const deliverySortKey = (o: Pick<Order, "delivery_date" | "delivery_windo
   }
   return day + mins * 60000 + new Date(o.placed_at).getTime() / 1e7;
 };
+
+/* How often each product actually gets ordered, by distinct order. The yard's
+   own words: staff "often select the wrong product, leading to incorrect
+   pricing", because the search listed every "soil" alphabetically and the one
+   they sell forty times a week was third. Counted over whatever orders are
+   loaded — the working window, plus history once it has been fetched. */
+export const productPopularity = (orderItems: Record<string, OrderItem[]>): Map<string, number> => {
+  const m = new Map<string, number>();
+  for (const lines of Object.values(orderItems)) {
+    const seen = new Set<string>();
+    for (const i of lines) {
+      if (!i.product_id || seen.has(i.product_id)) continue;
+      seen.add(i.product_id);
+      m.set(i.product_id, (m.get(i.product_id) || 0) + 1);
+    }
+  }
+  return m;
+};
+
+/* Search-result order for products: what was typed at the start of the name
+   first, then the most-ordered, then the alphabet. */
+export const rankProducts = <T extends { name: string }>(hits: T[], q: string, pop: Map<string, number>, idOf: (p: T) => string): T[] =>
+  [...hits].sort(
+    (a, b) =>
+      Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)) ||
+      (pop.get(idOf(b)) || 0) - (pop.get(idOf(a)) || 0) ||
+      a.name.localeCompare(b.name)
+  );
+
+/* A date window for the list filters. Either bound may be empty — "from the
+   first of the month" and "up to Friday" are both real questions — and the
+   end is inclusive, because nobody asking for "to the 31st" means the 30th.
+   Dates are ISO (YYYY-MM-DD); the returned test takes a millisecond time. */
+export const rangeTest = (fromIso: string, toIso: string): ((t: number) => boolean) => {
+  const from = fromIso ? new Date(fromIso + "T00:00:00").getTime() : -Infinity;
+  const to = toIso ? new Date(toIso + "T00:00:00").getTime() + 86_400_000 : Infinity;
+  return (t) => t >= from && t < to;
+};
+
+/* Every word typed has to be found, so "pearce 209.50" narrows rather than
+   widens — the yard asked to be able to combine customer and total when a
+   caller has neither an order number nor an invoice in front of them. */
+export const matchesAllTerms = (hay: string, query: string): boolean => {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return terms.every((t) => hay.includes(t));
+};

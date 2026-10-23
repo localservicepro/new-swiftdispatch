@@ -4,6 +4,7 @@ import { AUD, qtyText } from "../lib/domain";
 import { Button, Card, DataTable, Select } from "../design-system/components.js";
 import HistoryNotice from "./HistoryNotice";
 import ProductFilter from "./ProductFilter";
+import DateRangeFields from "./DateRange";
 
 const REPORTS = [
   "Item movement — out and still to go",
@@ -17,6 +18,7 @@ export default function Reports() {
   const { orders, orderItems, customers, products, suburbs, team } = useApp();
   const [report, setReport] = useState<ReportName>(REPORTS[0]);
   const [range, setRange] = useState("This month");
+  const [custom, setCustom] = useState({ from: "", to: "" });
   /* Empty means everything. One product narrows every report to that product,
      which is what the quarry question actually is: not "how did we go", but
      "how much 20mm is going out this week and do I need another load in". */
@@ -28,10 +30,17 @@ export default function Reports() {
     if (range === "This week") d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
     else if (range === "This month") d.setDate(1);
     else if (range === "All time") return new Date(0);
+    else if (range === "Custom range") return custom.from ? new Date(custom.from + "T00:00:00") : new Date(0);
     return d;
-  }, [range]);
+  }, [range, custom]);
+  /* Exclusive end. Only a custom range has one — the presets all run to now. */
+  const rangeEnd = useMemo(
+    () => (range === "Custom range" && custom.to ? new Date(custom.to + "T00:00:00").getTime() + 86_400_000 : Infinity),
+    [range, custom]
+  );
+  const inRange = (t: number) => t >= rangeStart.getTime() && t < rangeEnd;
 
-  const live = orders.filter((o) => !o.deleted_at && o.kind !== "master" && new Date(o.placed_at) >= rangeStart);
+  const live = orders.filter((o) => !o.deleted_at && o.kind !== "master" && inRange(new Date(o.placed_at).getTime()));
 
   const productName = products.find((p) => p.id === productId)?.name;
   const keeps = (pid: string | null) => !productId || pid === productId;
@@ -51,11 +60,16 @@ export default function Reports() {
         if (o.deleted_at || o.kind === "master") return;
         const when = o.delivery_date || o.placed_at.slice(0, 10);
         const upcoming = when >= today && o.status !== "delivered" && o.status !== "cancelled";
-        /* Everything ahead of us counts, whatever the range says — a range that
-           hid next week's bookings would answer the wrong question. What the
-           range bounds is how far back the "gone" column reaches. */
-        if (!upcoming && new Date(o.placed_at) < rangeStart) return;
         if (o.status === "cancelled") return;
+        /* The range is on the delivery date here, both columns. The yard
+           asked for exactly this: "we very rarely need the full total of an
+           item going out; much more useful to filter by the specific dates
+           products are going out." A preset still lets every future booking
+           through — there is no end to "this month" when asking what is still
+           to go — but a custom range bounds both ends, so "what is booked for
+           Thursday" is one question. */
+        const t = new Date(when + "T00:00:00").getTime();
+        if (range === "Custom range" ? !inRange(t) : !upcoming && t < rangeStart.getTime()) return;
         (orderItems[o.id] || []).forEach((i) => {
           const p = products.find((x) => x.id === i.product_id);
           if (!p || !keeps(p.id) || Number(i.qty) <= 0) return;
@@ -93,7 +107,9 @@ export default function Reports() {
             revenue: AUD(a.revenue),
           })),
         footnote:
-          "Gone out is everything delivered in the range. Still to go is every order booked for today or later that has not been delivered yet — those are counted however far ahead they are booked, so the range only bounds the left-hand column.",
+          range === "Custom range"
+            ? "Both columns are bounded by the delivery dates in your range: Gone out is what was delivered inside it, Still to go is what is booked inside it and not yet delivered."
+            : "Gone out is everything delivered in the range. Still to go is every order booked for today or later that has not been delivered yet — counted however far ahead they are booked. Pick Custom range to bound both columns by delivery date.",
       };
     }
 
@@ -172,7 +188,7 @@ export default function Reports() {
         .map((a) => ({ driver: a.driver, jobs: String(a.jobs), delivered: String(a.delivered) })),
       footnote: "",
     };
-  }, [report, live, orders, orderItems, customers, products, suburbs, team, productId, rangeStart]);
+  }, [report, live, orders, orderItems, customers, products, suburbs, team, productId, rangeStart, rangeEnd, range]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -185,7 +201,8 @@ export default function Reports() {
           onChange={(e: any) => setReport(e.target.value as ReportName)}
           style={{ width: 270, flexShrink: 0 }}
         />
-        <Select size="sm" options={["Today", "This week", "This month", "All time"]} value={range} onChange={(e: any) => setRange(e.target.value)} style={{ width: 130, flexShrink: 0 }} />
+        <Select size="sm" options={["Today", "This week", "This month", "All time", "Custom range"]} value={range} onChange={(e: any) => setRange(e.target.value)} style={{ width: 140, flexShrink: 0 }} />
+        {range === "Custom range" && <DateRangeFields from={custom.from} to={custom.to} onChange={setCustom} />}
         <div style={{ flex: "1 1 220px", minWidth: 200 }}>
           <ProductFilter value={productId} onChange={setProductId} />
         </div>

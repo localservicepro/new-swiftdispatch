@@ -7,6 +7,8 @@ import {
   CLASS_STYLE,
   customerClass,
   deliverySortKey,
+  rangeTest,
+  matchesAllTerms,
   feeOf,
   goodsOf,
   LANES,
@@ -20,6 +22,7 @@ import { PAYMENT_METHOD_LABEL, type Order, type OrderStatus } from "../lib/types
 import { assignCrew, moveOrder, patchOrder } from "../data/api";
 import { Card, DataTable, Icon, Input, Select, Tabs, Button } from "../design-system/components.js";
 import BoardCard from "./BoardCard";
+import DateRangeFields from "./DateRange";
 import { GoodsCell, NotesCell } from "./OrderLines";
 import { itemsText } from "../lib/domain";
 import { useViewport } from "../lib/viewport";
@@ -28,13 +31,18 @@ import { useViewport } from "../lib/viewport";
    always the real ones — this only bounds how much of a lane becomes DOM. */
 const LANE_PAGE = 100;
 
-const PERIODS = ["Today", "This week", "This month", "All time"] as const;
+const PERIODS = ["Today", "This week", "This month", "All time", "Custom range"] as const;
 type Period = (typeof PERIODS)[number];
 const SORTS = ["Delivery time — oldest first", "Placed — newest first", "Value — highest first"] as const;
 type SortBy = (typeof SORTS)[number];
 
-const inPeriodFactory = (period: Period) => {
+const inPeriodFactory = (period: Period, range: { from: string; to: string }) => {
   if (period === "All time") return () => true;
+  if (period === "Custom range") {
+    const test = rangeTest(range.from, range.to);
+    return (o: Order) =>
+      test(o.delivery_date ? new Date(o.delivery_date + "T00:00:00").getTime() : new Date(o.placed_at).getTime());
+  }
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (period === "This week") start.setDate(start.getDate() - start.getDay());
@@ -107,6 +115,7 @@ export default function Board() {
      (an order with no date yet goes under the day it was placed), the sort
      reorders every lane. */
   const [period, setPeriod] = useState<Period>("All time");
+  const [range, setRange] = useState({ from: "", to: "" });
   const [sortBy, setSortBy] = useState<SortBy>(SORTS[0]);
 
   const live = useMemo(
@@ -164,12 +173,14 @@ export default function Board() {
          ordered it, so the street and suburb are searchable too. */
       o.street,
       suburbs.find((s) => s.id === o.suburb_id)?.name,
-      ...(c?.contacts.map((ct) => `${ct.name} ${ct.phone || ""}`) || []),
+      ...(c?.contacts.map((ct) => `${ct.name} ${ct.phone || ""} ${ct.email || ""}`) || []),
+      AUD(totalOf(o)),
+      totalOf(o).toFixed(2),
     ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
-    return hay.includes(q);
+    return matchesAllTerms(hay, q);
   };
 
   const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
@@ -177,7 +188,7 @@ export default function Board() {
   let boardCount = 0;
   let boardValue = 0;
 
-  const inPeriod = useMemo(() => inPeriodFactory(period), [period]);
+  const inPeriod = useMemo(() => inPeriodFactory(period, range), [period, range]);
   /* A card someone has dragged into place keeps that place. Ranked cards lead
      the column in rank order; the rest follow by delivery time as before. The
      other two sorts are explicit requests and ignore the hand ordering. */
@@ -360,6 +371,7 @@ export default function Board() {
           onChange={(e: any) => setPeriod(e.target.value as Period)}
           style={{ width: 130, flexShrink: 0 }}
         />
+        {period === "Custom range" && <DateRangeFields from={range.from} to={range.to} onChange={setRange} />}
         <Select
           size="sm"
           options={SORTS as unknown as string[]}

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
+import { productPopularity, rankProducts } from "../lib/domain";
 import { Icon, Input } from "../design-system/components.js";
 import AnchoredPopover from "./AnchoredPopover";
 
@@ -21,7 +22,8 @@ export default function ProductFilter({
   onChange: (id: string) => void;
   placeholder?: string;
 }) {
-  const { products } = useApp();
+  const { products, orderItems } = useApp();
+  const popularity = useMemo(() => productPopularity(orderItems), [orderItems]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState(0);
@@ -35,13 +37,8 @@ export default function ProductFilter({
     const hits = products.filter((p) =>
       (p.name + " " + p.sku).toLowerCase().includes(q),
     );
-    hits.sort(
-      (a, b) =>
-        Number(b.name.toLowerCase().startsWith(q)) -
-        Number(a.name.toLowerCase().startsWith(q)),
-    );
-    return hits.slice(0, SHOWN);
-  }, [products, q]);
+    return rankProducts(hits, q, popularity, (p) => p.id).slice(0, SHOWN);
+  }, [products, q, popularity]);
 
   useEffect(() => setCursor(0), [q]);
 

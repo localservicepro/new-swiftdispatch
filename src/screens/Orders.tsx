@@ -11,6 +11,8 @@ import {
   orderTotal,
   placedText,
   shortDate,
+  rangeTest,
+  matchesAllTerms,
 } from "../lib/domain";
 import { PAYMENT_METHOD_LABEL, type Order, type OrderStatus } from "../lib/types";
 import { deleteOrder } from "../data/api";
@@ -18,6 +20,7 @@ import { Button, Card, DataTable, Icon, Input, Select } from "../design-system/c
 import HistoryNotice from "./HistoryNotice";
 import { GoodsCell, NotesCell } from "./OrderLines";
 import Confirm from "./Confirm";
+import DateRangeFields from "./DateRange";
 import { useViewport } from "../lib/viewport";
 
 const STATUS_LABEL: Record<OrderStatus, string> = {
@@ -31,7 +34,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   ready_for_pickup: "Ready for pickup",
 };
 
-const PERIODS = ["Today", "This week", "This month", "All time"] as const;
+const PERIODS = ["Today", "This week", "This month", "All time", "Custom range"] as const;
 type Period = (typeof PERIODS)[number];
 
 const SORTS = ["Delivery — soonest first", "Delivery — latest first", "Placed — newest first"] as const;
@@ -59,6 +62,7 @@ export default function Orders() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All statuses");
   const [period, setPeriod] = useState<Period>("All time");
+  const [range, setRange] = useState({ from: "", to: "" });
   const [sort, setSort] = useState<Sort>(SORTS[2]);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [page, setPage] = useState(1);
@@ -92,14 +96,23 @@ export default function Orders() {
       const c = o.customer_id ? custById.get(o.customer_id) : undefined;
       const sub = o.suburb_id ? suburbById.get(o.suburb_id) : undefined;
       let s = `${o.order_number} ${c?.name || ""} ${o.walk_in_name || ""} ${o.po_number || ""} ${o.street || ""} ${sub?.name || ""} ${sub?.postcode || ""}`;
-      if (c?.contacts?.length) for (const ct of c.contacts) if (ct.phone) s += ` ${ct.phone}`;
+      if (c?.contacts?.length) for (const ct of c.contacts) s += ` ${ct.phone || ""} ${ct.email || ""}`;
+      /* The total, both as printed and as a bare number, because a caller
+         reads "$209.50" off a bank statement and nobody types the dollar sign. */
+      const total = orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
+      s += ` ${AUD(total)} ${total.toFixed(2)}`;
       m.set(o.id, s.toLowerCase());
     }
     return m;
-  }, [orders, custById, suburbById]);
+  }, [orders, custById, suburbById, orderItems, suburbs, paySettings]);
 
   const inPeriod = useMemo(() => {
     if (period === "All time") return () => true;
+    if (period === "Custom range") {
+      const test = rangeTest(range.from, range.to);
+      return (o: Order) =>
+        test(o.delivery_date ? new Date(o.delivery_date + "T00:00:00").getTime() : new Date(o.placed_at).getTime());
+    }
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     if (period === "This week") start.setDate(start.getDate() - start.getDay());
@@ -116,7 +129,7 @@ export default function Orders() {
       const t = o.delivery_date ? new Date(o.delivery_date + "T00:00:00").getTime() : new Date(o.placed_at).getTime();
       return t >= from && t < to;
     };
-  }, [period]);
+  }, [period, range]);
 
   const matched = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -125,7 +138,7 @@ export default function Orders() {
       if (o.deleted_at || o.kind === "split") continue;
       if (statusFilter !== "All statuses" && STATUS_LABEL[o.status] !== statusFilter) continue;
       if (!inPeriod(o)) continue;
-      if (q && !haystack.get(o.id)?.includes(q)) continue;
+      if (q && !matchesAllTerms(haystack.get(o.id) || "", q)) continue;
       out.push(o);
     }
     /* Newest first, by when it was taken. An order somebody has just written up
@@ -141,7 +154,7 @@ export default function Orders() {
   const pageCount = Math.max(1, Math.ceil(matched.length / pageSize));
   /* Filters narrowing under your feet should not leave you on a page that no
      longer exists. */
-  useEffect(() => setPage(1), [query, statusFilter, period, pageSize, sort]);
+  useEffect(() => setPage(1), [query, statusFilter, period, range, pageSize, sort]);
   const current = Math.min(page, pageCount);
   const from = (current - 1) * pageSize;
   const shown = useMemo(() => matched.slice(from, from + pageSize), [matched, from, pageSize]);
@@ -242,6 +255,7 @@ export default function Orders() {
           onChange={(e: any) => setPeriod(e.target.value as Period)}
           style={{ width: 140, flexShrink: 0 }}
         />
+        {period === "Custom range" && <DateRangeFields from={range.from} to={range.to} onChange={setRange} />}
         <Select
           size="sm"
           options={SORTS as unknown as string[]}

@@ -9,6 +9,8 @@ import {
   resolvedSuburbFee,
   customerBadgeType,
   defaultSettleMethod,
+  productPopularity,
+  rankProducts,
   settleLabelOf,
   dmy,
   isoFromDmy,
@@ -55,6 +57,7 @@ export default function NewOrder() {
   const ui = useUi();
   const app = useApp();
   const { products, categories, specials, customers, suburbs, trucks, paySettings, business, orderItems } = app;
+  const popularity = useMemo(() => productPopularity(orderItems), [orderItems]);
 
   const { tight } = useViewport();
   const yard = ui.orderMode === "yardsale";
@@ -304,6 +307,9 @@ export default function NewOrder() {
     if (catFilter !== "All" && catName(p.category_id) !== catFilter) return false;
     return !pq || (p.name + " " + p.sku).toLowerCase().includes(pq);
   });
+  /* Searching ranks by what the yard actually sells. Browsing a category
+     keeps the catalogue order, which is the order people know the shelf in. */
+  const rankedProducts = pq ? rankProducts(visibleProducts, pq, popularity, (p) => p.id) : visibleProducts;
 
   useEffect(() => setShownProducts(PRODUCT_PAGE), [prodQuery, catFilter]);
 
@@ -814,7 +820,7 @@ export default function NewOrder() {
                          at that amount and clears the box, so a phone order is
                          one line of typing per product. */
                       if (e.key !== "Enter" || parsed.qty === null) return;
-                      const hit = visibleProducts[0];
+                      const hit = rankedProducts[0];
                       if (!hit) return;
                       e.preventDefault();
                       e.stopPropagation();
@@ -838,13 +844,13 @@ export default function NewOrder() {
                       }}
                     >
                       <Icon name="corner-down-left" size={12} color="var(--brand-primary)" />
-                      {visibleProducts.length ? (
+                      {rankedProducts.length ? (
                         <span>
                           Enter loads{" "}
                           <strong style={{ color: "var(--text-primary)" }}>
-                            {qtyText(parsed.qty, visibleProducts[0].unit)} {visibleProducts[0].name}
+                            {qtyText(parsed.qty, rankedProducts[0].unit)} {rankedProducts[0].name}
                           </strong>
-                          {visibleProducts.length > 1 ? ` — or tap any of the ${visibleProducts.length} below` : ""}
+                          {rankedProducts.length > 1 ? ` — or tap any of the ${rankedProducts.length} below` : ""}
                         </span>
                       ) : (
                         <span>
@@ -859,7 +865,7 @@ export default function NewOrder() {
 
                 <div className="product-grid-wrap">
                   <div className="product-grid">
-                    {visibleProducts.slice(0, shownProducts).map((p) => {
+                    {rankedProducts.slice(0, shownProducts).map((p) => {
                       const inCart = cart.find((l) => l.productId === p.id && l.to === activeDraft)?.qty || 0;
                       const eff = priceOf(p.id);
                       /* Only a counted product can be out of one. */
@@ -948,15 +954,15 @@ export default function NewOrder() {
                     })}
                   </div>
                 </div>
-                {visibleProducts.length === 0 && (
+                {rankedProducts.length === 0 && (
                   <div style={{ padding: 20, textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
                     No products match that search.
                   </div>
                 )}
-                {visibleProducts.length > shownProducts && (
+                {rankedProducts.length > shownProducts && (
                   <div style={{ display: "flex", justifyContent: "center" }}>
                     <Button variant="outline" size="sm" iconLeft="chevron-down" onClick={() => setShownProducts((n) => n + PRODUCT_PAGE)}>
-                      Show {Math.min(PRODUCT_PAGE, visibleProducts.length - shownProducts)} more of {visibleProducts.length}
+                      Show {Math.min(PRODUCT_PAGE, rankedProducts.length - shownProducts)} more of {rankedProducts.length}
                     </Button>
                   </div>
                 )}

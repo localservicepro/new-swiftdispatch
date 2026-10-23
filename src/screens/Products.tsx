@@ -12,6 +12,8 @@ const PRODUCT_ACTION: Record<string, string> = {
   reject: "Skip",
 };
 import { useApp } from "../store/store";
+import { useUi } from "../store/ui";
+import { PickerField } from "./DateWindowPicker";
 import { AUD, qtyText, soldIn, unitFor, unitOf, unitPrice, UNITS, dmy } from "../lib/domain";
 import type { Product, ProductUnit } from "../lib/types";
 import { addCategory, createSpecial, deleteProduct, removeCategory, removeSpecial, renameCategory, toggleSpecial, upsertProduct } from "../data/api";
@@ -46,6 +48,7 @@ const BLANK_FORM = {
 export default function Products() {
   const app = useApp();
   const { products, categories, specials } = app;
+  const ui = useUi();
   const [tab, setTab] = useState<"catalogue" | "categories" | "specials">("catalogue");
   const [view, setView] = useState<"cards" | "table">("cards");
   const [query, setQuery] = useState("");
@@ -61,6 +64,8 @@ export default function Products() {
   const [importing, setImporting] = useState(false);
   const [form, setForm] = useState({ ...BLANK_FORM });
   const [newCatName, setNewCatName] = useState("");
+  const [catQuery, setCatQuery] = useState("");
+  const [spQuery, setSpQuery] = useState("");
   const [sp, setSp] = useState({ name: "", kind: "percent" as "percent" | "amount", value: "", scope: "products" as "all" | "category" | "products", categoryId: "", ids: [] as string[], from: "", to: "" });
 
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name || "—";
@@ -347,7 +352,8 @@ export default function Products() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 12, alignItems: "start" }}>
           <Card title="Categories" subtitle="What the order builder groups products by" padding="default">
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {categories.map((c) => {
+              <Input size="sm" value={catQuery} onChange={(e: any) => setCatQuery(e.target.value)} placeholder={`Search ${categories.length} categories`} />
+              {categories.filter((c) => !catQuery.trim() || c.name.toLowerCase().includes(catQuery.trim().toLowerCase())).map((c) => {
                 const count = products.filter((p) => p.category_id === c.id).length;
                 return (
                   <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, background: "var(--surface-raised)" }}>
@@ -504,8 +510,9 @@ export default function Products() {
               {sp.scope === "products" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".09em", color: "var(--text-faint)" }}>Pick the products</div>
+                  <Input size="sm" value={spQuery} onChange={(e: any) => setSpQuery(e.target.value)} placeholder="Search by name or SKU" />
                   <div style={{ maxHeight: 190, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, padding: 6, borderRadius: 8, border: "1px solid var(--border-subtle)" }}>
-                    {products.map((p) => {
+                    {products.filter((p) => !spQuery.trim() || (p.name + " " + p.sku).toLowerCase().includes(spQuery.trim().toLowerCase())).map((p) => {
                       const on = sp.ids.includes(p.id);
                       return (
                         <div
@@ -523,10 +530,27 @@ export default function Products() {
                   <div style={{ fontSize: 11, color: "var(--text-faint)" }}>{sp.ids.length ? `${sp.ids.length} selected` : "Nothing selected yet"}</div>
                 </div>
               )}
+              {/* The same calendar orders are booked on, instead of typing a
+                  date the right way round. */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>
-                <Input size="sm" label="From" value={sp.from} onChange={(e: any) => setSp({ ...sp, from: e.target.value })} placeholder="DD/MM/YYYY" />
-                <Input size="sm" label="To" value={sp.to} onChange={(e: any) => setSp({ ...sp, to: e.target.value })} placeholder="DD/MM/YYYY" />
+                <PickerField
+                  label="From"
+                  icon="calendar"
+                  value={sp.from || "Any time"}
+                  onClick={() => ui.set({ picker: { kind: "date", current: sp.from || undefined, onPick: (v) => setSp((s) => ({ ...s, from: v })) } })}
+                />
+                <PickerField
+                  label="To"
+                  icon="calendar"
+                  value={sp.to || "No end"}
+                  onClick={() => ui.set({ picker: { kind: "date", current: sp.to || undefined, onPick: (v) => setSp((s) => ({ ...s, to: v })) } })}
+                />
               </div>
+              {(sp.from || sp.to) && (
+                <span onClick={() => setSp({ ...sp, from: "", to: "" })} style={{ cursor: "pointer", fontSize: 11, color: "var(--brand-primary)" }}>
+                  Clear dates
+                </span>
+              )}
               <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>{nsPreview}</div>
               <Button
                 variant="primary"

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../store/store";
-import { AUD, unitPrice } from "../lib/domain";
+import { AUD, unitPrice, productPopularity, rankProducts } from "../lib/domain";
 import type { Product } from "../lib/types";
 import { Icon, Input } from "../design-system/components.js";
 import AnchoredPopover from "./AnchoredPopover";
@@ -27,7 +27,8 @@ export default function ProductSearchAdd({
   label?: string;
   placeholder?: string;
 }) {
-  const { products, specials } = useApp();
+  const { products, specials, orderItems } = useApp();
+  const popularity = useMemo(() => productPopularity(orderItems), [orderItems]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState(0);
@@ -41,14 +42,10 @@ export default function ProductSearchAdd({
       (p.name + " " + p.sku).toLowerCase().includes(q),
     );
     /* A product whose name starts with what was typed is almost always the one
-       meant — "cement" should not open on "Cement Australia Off White". */
-    hits.sort(
-      (a, b) =>
-        Number(b.name.toLowerCase().startsWith(q)) -
-        Number(a.name.toLowerCase().startsWith(q)),
-    );
-    return hits.slice(0, SHOWN);
-  }, [products, q]);
+       meant — "cement" should not open on "Cement Australia Off White" — and
+       among those, the one the yard sells most. */
+    return rankProducts(hits, q, popularity, (p) => p.id).slice(0, SHOWN);
+  }, [products, q, popularity]);
 
   useEffect(() => setCursor(0), [q]);
 
