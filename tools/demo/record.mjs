@@ -65,21 +65,24 @@ await p.addInitScript(() => {
   Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', { get() { const w = d.get.call(this); if (w && !w.__p) { w.__p = 1; w.print = () => {}; } return w; } });
 });
 
-const pause = (ms) => p.waitForTimeout(ms);
-const typeInto = async (loc, text, delay = 70) => { await loc.click(); await p.keyboard.type(text, { delay }); };
+/* Pacing. Each scene is paced to its narration line — a screen recording
+   that outruns the voice freezes on its last frame for the remainder. */
+let SLOW = 1;
+const pause = (ms) => p.waitForTimeout(ms * SLOW);
+const typeInto = async (loc, text, delay = 70) => { await loc.click(); await p.keyboard.type(text, { delay: Math.round(delay * Math.min(SLOW, 1.8)) }); };
 const nav = async (l) => { const t = p.locator(`button[title="${l}"]`); if (await t.count()) await t.first().click(); else await p.getByText(l, { exact: true }).first().click(); await pause(900); };
 const body = async () => (await p.innerText('body')).replace(/\s+/g, ' ');
 
 try {
 /* ---- Scene 1: sign in with 1004 ---- */
-scene('login');
+scene('login'); SLOW = 2.3;
 await p.goto('http://localhost:4173/', { waitUntil: 'load' });
 await pause(1800);
 for (const d of ['1', '0', '0', '4']) { await p.getByText(d, { exact: true }).last().click(); await pause(450); }
 await pause(3200);
 
 /* ---- Scene 2: items ---- */
-scene('items');
+scene('items'); SLOW = 2.7;
 await nav('New order'); await pause(800);
 const prod = p.locator('input[placeholder*="0.5*sand"]').first();
 await typeInto(prod, '.5*wbs'); await pause(900); await prod.press('Enter'); await pause(900);
@@ -89,14 +92,14 @@ await p.locator('.product-grid > div').first().locator('button').last().click();
 await p.locator('.product-grid > div').first().locator('button').last().click(); await pause(1400);
 
 /* ---- Scene 3: save for later, resume ---- */
-scene('save');
+scene('save'); SLOW = 2.3;
 await nav('Orders'); await pause(700);
 await p.getByRole('button', { name: 'Save for later' }).first().click(); await pause(1600);
 await nav('New order'); await pause(1200);
 await p.getByRole('button', { name: 'Resume' }).first().click(); await pause(1800);
 
 /* ---- Scene 4: single order checkout ---- */
-scene('checkout');
+scene('checkout'); SLOW = 2.4;
 await p.getByRole('button', { name: /Continue checkout/ }).first().click(); await pause(1200);
 const cust = p.locator('input[placeholder*="business or person"]').first();
 await typeInto(cust, 'Barw'); await pause(900);
@@ -115,7 +118,7 @@ if (await p.getByRole('button', { name: 'Skip' }).count()) { await p.getByRole('
 await pause(1200);
 
 /* ---- Scene 5: split order ---- */
-scene('split');
+scene('split'); SLOW = 1.25;
 await nav('New order'); await pause(800);
 if (await p.getByRole('button', { name: 'Discard' }).count()) { await p.getByRole('button', { name: 'Discard' }).first().click(); await pause(500); }
 const prod2 = p.locator('input[placeholder*="0.5*sand"]').first();
@@ -145,7 +148,7 @@ if (await p.getByRole('button', { name: 'Skip' }).count()) { await p.getByRole('
 await pause(800);
 
 /* ---- Scene 6: where they landed ---- */
-scene('board');
+scene('board'); SLOW = 2.6;
 await nav('Dispatch board'); await pause(2600);
 await nav('Orders'); await pause(2400);
 endScene();
