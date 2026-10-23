@@ -17,6 +17,7 @@ import {
   isoFromDmy,
   customerBadgeType,
   settleLabelOf,
+  pickableSuburbs,
 } from "../lib/domain";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
 import {
@@ -93,7 +94,7 @@ export default function OrderDrawer() {
   const suburbName = (id: string | null) => suburbs.find((s) => s.id === id)?.name || "";
   const truckOptions = trucks.map((t) => ({ value: t.id, label: t.rego + " — " + t.type }));
   const driverOptions = team.filter((t) => t.role === "driver").map((t) => ({ value: t.id, label: t.name }));
-  const suburbOptions = suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }));
+  const suburbOptions = pickableSuburbs(suburbs).map((s) => ({ value: s.id, label: s.name }));
   const { products } = useApp();
 
   const editTarget = sel || (isMaster ? master : null);

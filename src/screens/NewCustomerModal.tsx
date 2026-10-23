@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useApp } from "../store/store";
-import { AUD, suburbRate } from "../lib/domain";
+import { AUD, pickableSuburbs, suburbRate } from "../lib/domain";
+import AddressSearch from "./AddressSearch";
 import { createCustomer } from "../data/api";
 import type { Customer } from "../lib/types";
 import { Button, Input, Select, Tabs } from "../design-system/components.js";
@@ -102,12 +103,21 @@ export default function NewCustomerModal({ onClose, onCreated }: { onClose: () =
             <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
               Optional now — but until a suburb is on file no delivery fee can be worked out, so orders will ask for one.
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
-              <Input size="sm" label="Street" value={n2.street} onChange={(e: any) => patch({ street: e.target.value })} placeholder="88 Barwon Heads Rd" />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 8, alignItems: "start" }}>
+              {/* The same lookup the order screen uses: type the street then
+                  the suburb and it is picked for you, which this form did not
+                  do — every suburb was a scroll through the dropdown. */}
+              <AddressSearch
+                street={n2.street}
+                suburbName={suburbName(n2.suburbId)}
+                suburbs={app.suburbs}
+                onStreet={(v) => patch({ street: v })}
+                onResolved={({ street, suburb }) => patch({ street, suburbId: suburb?.id || "" })}
+              />
               <Select
                 size="sm"
                 label="Suburb"
-                options={app.suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }))}
+                options={pickableSuburbs(app.suburbs).map((s) => ({ value: s.id, label: s.name }))}
                 value={n2.suburbId}
                 onChange={(e: any) => patch({ suburbId: e.target.value })}
                 allowUnset

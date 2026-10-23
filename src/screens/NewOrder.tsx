@@ -11,6 +11,7 @@ import {
   defaultSettleMethod,
   productPopularity,
   rankProducts,
+  pickableSuburbs,
   settleLabelOf,
   dmy,
   isoFromDmy,
@@ -426,7 +427,7 @@ export default function NewOrder() {
   }));
   const customerIsBusiness = effectiveCustomer ? effectiveCustomer.entity !== "Individual" : false;
 
-  const suburbOptions = suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }));
+  const suburbOptions = pickableSuburbs(suburbs).map((s) => ({ value: s.id, label: s.name }));
   const truckOptions = trucks.map((t) => ({ value: t.id, label: `${t.rego} — ${t.type}` }));
 
   /* One adjustment, edited from either step: direction (discount or surcharge),

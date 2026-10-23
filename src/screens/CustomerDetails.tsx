@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useApp } from "../store/store";
-import { AUD, dmy, suburbRate } from "../lib/domain";
+import { AUD, dmy, pickableSuburbs, suburbRate } from "../lib/domain";
 import type { Customer, CustomerContact } from "../lib/types";
 import { addContact, patchContact, patchCustomer, removeContact } from "../data/api";
 import { Alert, Badge, Button, Card, Icon, Input, Select } from "../design-system/components.js";
@@ -44,7 +44,7 @@ export function CustomerDetails({ cust }: { cust: Customer }) {
   const suburbs = app.suburbs;
   const billRate = suburbRate(cust.billing_suburb_id, suburbs);
   const suburbName = suburbs.find((s) => s.id === cust.billing_suburb_id)?.name || "";
-  const suburbOptions = suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }));
+  const suburbOptions = pickableSuburbs(suburbs).map((s) => ({ value: s.id, label: s.name }));
   const isPerson = cust.entity === "Individual";
 
   return (

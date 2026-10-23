@@ -463,3 +463,31 @@ export const matchesAllTerms = (hay: string, query: string): boolean => {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   return terms.every((t) => hay.includes(t));
 };
+
+/* The suburbs anyone may pick. The table carries four interstate rows from the
+   import — one each in ACT, NSW, QLD and WA — and the yard does not deliver
+   interstate, so offering them was only a way to pick the wrong one. They stay
+   in the table for the history that points at them. */
+export const pickableSuburbs = (suburbs: Suburb[]): Suburb[] =>
+  suburbs.filter((s) => s.active && (!s.state || s.state.toUpperCase() === "VIC"));
+
+/* "12 Reserve Rd, Box Hill" → the street and the suburb, when the text ends in
+   a suburb the yard delivers to (a postcode or "VIC" after it is fine). */
+export const splitSuburbFromText = (
+  text: string,
+  suburbs: Suburb[]
+): { street: string; suburb: Suburb } | null => {
+  const t = text.trim().replace(/\s+/g, " ");
+  if (!t) return null;
+  const low = t.toLowerCase();
+  let best: { street: string; suburb: Suburb } | null = null;
+  for (const s of pickableSuburbs(suburbs)) {
+    const name = s.name.toLowerCase();
+    const re = new RegExp(`(?:^|[\\s,]+)${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[\\s,]+vic\\.?)?(?:[\\s,]+${s.postcode})?\\s*$`, "i");
+    const m = low.match(re);
+    if (!m) continue;
+    const street = t.slice(0, t.length - m[0].length).replace(/[\s,]+$/, "");
+    if (!best || s.name.length > best.suburb.name.length) best = { street, suburb: s };
+  }
+  return best;
+};

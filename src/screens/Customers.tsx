@@ -4,7 +4,7 @@ import HistoryNotice from "./HistoryNotice";
 import NewCustomerModal from "./NewCustomerModal";
 import { ContactsEditor, CustomerDetails } from "./CustomerDetails";
 import { useUi } from "../store/ui";
-import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, settleLabelOf, suburbRate } from "../lib/domain";
+import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, pickableSuburbs, settleLabelOf, suburbRate } from "../lib/domain";
 import type { Customer, CustomerSite, Suburb } from "../lib/types";
 import { applyCustomerImport, exportCustomersCsv, planCustomerImport, type ImportPlan } from "../data/customerIo";
 import ImportPreview, { type PreviewRow } from "./ImportPreview";
@@ -590,7 +590,7 @@ function CustomerDrawer(props: {
                     <Select
                       size="sm"
                       label="Suburb"
-                      options={app.suburbs.filter((s) => s.active).map((s) => ({ value: s.id, label: s.name }))}
+                      options={pickableSuburbs(app.suburbs).map((s) => ({ value: s.id, label: s.name }))}
                       value={newSite.suburbId}
                       onChange={(e: any) => setNewSite({ ...newSite, suburbId: e.target.value })}
                       allowUnset
@@ -965,7 +965,7 @@ function SiteRow({ customerId, site, suburbs }: { customerId: string; site: Cust
           <Select
             size="sm"
             label="Suburb"
-            options={suburbs.filter((x) => x.active).map((x) => ({ value: x.id, label: x.name }))}
+            options={pickableSuburbs(suburbs).map((x) => ({ value: x.id, label: x.name }))}
             value={form.suburbId}
             onChange={(e: any) => setForm({ ...form, suburbId: e.target.value })}
             allowUnset
