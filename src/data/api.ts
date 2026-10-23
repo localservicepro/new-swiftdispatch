@@ -107,7 +107,8 @@ export function copyToAllSplits(masterId: string, what: "address" | "schedule") 
 }
 
 export function moveOrder(id: string, to: OrderStatus) {
-  patchOrder(id, { status: to });
+  /* A hand-set place in a board column is a place in that column. */
+  patchOrder(id, { status: to, board_rank: null });
   logActivity("order", id, "status:" + to);
   void autoPushToMyob(id);
 }

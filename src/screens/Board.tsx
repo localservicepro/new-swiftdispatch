@@ -17,8 +17,9 @@ import {
   suburbRate,
 } from "../lib/domain";
 import { PAYMENT_METHOD_LABEL, type Order, type OrderStatus } from "../lib/types";
-import { assignCrew, moveOrder } from "../data/api";
-import { Card, DataTable, Icon, Input, OrderCard, Select, Tabs, Button } from "../design-system/components.js";
+import { assignCrew, moveOrder, patchOrder } from "../data/api";
+import { Card, DataTable, Icon, Input, Select, Tabs, Button } from "../design-system/components.js";
+import BoardCard from "./BoardCard";
 import { GoodsCell, NotesCell } from "./OrderLines";
 import { itemsText } from "../lib/domain";
 import { useViewport } from "../lib/viewport";
@@ -57,6 +58,45 @@ export default function Board() {
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [query, setQuery] = useState("");
   const [dragging, setDragging] = useState<{ id: string; from: OrderStatus } | null>(null);
+  const [dropBefore, setDropBefore] = useState<string | null>(null);
+  /* Column widths the yard has set by dragging a column edge, by lane id,
+     kept per browser. A column with no width set shares the screen equally
+     with the others (row 172); one with a width keeps it (rows 132, 151).
+     Double-click the edge to let it share again. */
+  const [laneWidths, setLaneWidths] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sdp_board_lane_widths") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const setLaneWidth = (id: string, w: number | null) =>
+    setLaneWidths((prev) => {
+      const next = { ...prev };
+      if (w === null) delete next[id];
+      else next[id] = Math.round(w);
+      try {
+        localStorage.setItem("sdp_board_lane_widths", JSON.stringify(next));
+      } catch {
+        /* private window — the width just does not survive the tab */
+      }
+      return next;
+    });
+  const startLaneResize = (id: string, e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const lane = (e.currentTarget.parentElement as HTMLElement) || null;
+    if (!lane) return;
+    const startX = e.clientX;
+    const startW = lane.getBoundingClientRect().width;
+    const min = tight ? 240 : 280;
+    const onMove = (ev: PointerEvent) => setLaneWidth(id, Math.max(min, startW + (ev.clientX - startX)));
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
   /* How many cards each lane is currently drawing. A busy Monday can put a few
      hundred orders in one stage, and every card is a fair amount of DOM. */
   const [shown, setShown] = useState<Partial<Record<OrderStatus, number>>>({});
@@ -70,7 +110,18 @@ export default function Board() {
   const [sortBy, setSortBy] = useState<SortBy>(SORTS[0]);
 
   const live = useMemo(
-    () => orders.filter((o) => !o.deleted_at && o.kind !== "master" && o.status !== "cancelled" && o.status !== "ready_for_pickup"),
+    () =>
+      orders.filter(
+        (o) =>
+          !o.deleted_at &&
+          o.kind !== "master" &&
+          /* A yard sale is rung up and walked out; it was never going on a
+             truck. Filtering on status alone let the few that had been moved
+             to another stage by hand leak onto the board. */
+          o.kind !== "yard_sale" &&
+          o.status !== "cancelled" &&
+          o.status !== "ready_for_pickup"
+      ),
     [orders]
   );
 
@@ -127,10 +178,46 @@ export default function Board() {
   let boardValue = 0;
 
   const inPeriod = useMemo(() => inPeriodFactory(period), [period]);
+  /* A card someone has dragged into place keeps that place. Ranked cards lead
+     the column in rank order; the rest follow by delivery time as before. The
+     other two sorts are explicit requests and ignore the hand ordering. */
+  const rankOf = (o: Order) => (o.board_rank === null || o.board_rank === undefined ? Infinity : Number(o.board_rank));
   const compare = (a: Order, b: Order) => {
     if (sortBy === "Placed — newest first") return Date.parse(b.placed_at) - Date.parse(a.placed_at);
     if (sortBy === "Value — highest first") return totalOf(b) - totalOf(a);
+    const ra = rankOf(a);
+    const rb = rankOf(b);
+    if (ra !== rb) return ra < rb ? -1 : 1;
     return deliverySortKey(a) - deliverySortKey(b);
+  };
+  const manualOrder = sortBy !== "Placed — newest first" && sortBy !== "Value — highest first";
+
+  /* Put the dragged card just before `before` in its lane (or at the end when
+     before is null). If every other card in the lane already carries a rank
+     the dragged one takes the midpoint and a single row is written; the first
+     move in a lane ranks the whole column as it stands, so what was on screen
+     stays where it was and only the moved card changes place. */
+  const placeInLane = (laneId: OrderStatus, draggedId: string, before: string | null) => {
+    const lane = lanes.find((l) => l.id === laneId);
+    if (!lane) return;
+    const dragged = orders.find((o) => o.id === draggedId);
+    if (!dragged) return;
+    const rest = lane.cards.filter((c) => c.id !== draggedId);
+    const at = before ? rest.findIndex((c) => c.id === before) : rest.length;
+    if (at < 0) return;
+    const allRanked = rest.every((c) => rankOf(c) !== Infinity);
+    if (allRanked) {
+      const prev = at > 0 ? rankOf(rest[at - 1]) : null;
+      const next = at < rest.length ? rankOf(rest[at]) : null;
+      const rank = prev === null && next === null ? 1000 : prev === null ? next! - 1000 : next === null ? prev + 1000 : (prev + next) / 2;
+      patchOrder(draggedId, { board_rank: rank });
+      return;
+    }
+    const list = [...rest.slice(0, at), dragged, ...rest.slice(at)];
+    list.forEach((c, i) => {
+      const rank = (i + 1) * 1000;
+      if (rankOf(c) !== rank) patchOrder(c.id, { board_rank: rank });
+    });
   };
 
   const lanes = LANES.map((lane) => {
@@ -166,15 +253,17 @@ export default function Board() {
       isSplit: o.kind === "split",
       customerName: c?.name || o.walk_in_name || "Walk-in",
       contactName: undefined,
-      customerType: c ? (c.billing === "account" ? "account" : c.tier === "Trade" ? "trade" : "residential") : "residential",
       status: lane,
       paymentStatus: o.payment_status,
       method: o.method,
       address: addressOf(o),
       window: `${shortDate(o.delivery_date)} · ${o.delivery_window || ""}`,
-      placedAt: placedText(o.placed_at),
       total: AUD(totalOf(o)),
-      itemCount: items.length,
+      /* One line per product, quantity first — what the loader reads. */
+      goods: items.map((i) => {
+        const prod = productById.get(i.product_id || "");
+        return `${qtyText(Number(i.qty), prod?.unit || "each")} ${prod?.name || i.description || "Item"}${i.backordered ? " (backorder)" : ""}`;
+      }),
       truck: truckLabel(o.truck_id),
       driver: driverLabel(o.driver_id),
       notes: o.delivery_notes || undefined,
@@ -306,6 +395,9 @@ export default function Board() {
                   e.preventDefault();
                   if (!dragging) return;
                   if (dragging.from !== lane.id) moveOrder(dragging.id, lane.id);
+                  /* Dropped on the column itself rather than on a card: it
+                     goes to the bottom of the hand-ordered run. */
+                  else if (manualOrder) placeInLane(lane.id, dragging.id, null);
                   const moved = orders.find((o) => o.id === dragging.id);
                   setDragging(null);
                   if (lane.id === "loading" && moved && !(moved.truck_id && moved.driver_id)) {
@@ -315,14 +407,25 @@ export default function Board() {
                   }
                 }}
                 style={{
-                  flex: tight ? "1 1 265px" : "1 1 320px",
-                  minWidth: tight ? 265 : 320,
-                  maxWidth: 420,
+                  /* No maximum: the columns share whatever the window gives
+                     them, so a wide or zoomed-out screen is filled rather
+                     than leaving a gutter on the right. The minimum keeps a
+                     card readable; past it the board scrolls sideways. */
+                  flex: laneWidths[lane.id] ? `0 0 ${laneWidths[lane.id]}px` : tight ? "1 1 265px" : "1 1 320px",
+                  minWidth: laneWidths[lane.id] ? undefined : tight ? 240 : 280,
                   display: "flex",
                   flexDirection: "column",
                   minHeight: 0,
+                  position: "relative",
                 }}
               >
+                <div
+                  onPointerDown={(e) => startLaneResize(lane.id, e)}
+                  onDoubleClick={() => setLaneWidth(lane.id, null)}
+                  title={laneWidths[lane.id] ? "Drag to resize · double-click to share the screen again" : "Drag to resize this column"}
+                  className="board-lane-handle"
+                  style={{ position: "absolute", top: 0, bottom: 8, right: -7, width: 12, cursor: "col-resize", zIndex: 2 }}
+                />
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "0 4px 8px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: lane.accent }} />
@@ -406,10 +509,28 @@ export default function Board() {
                         draggable
                         onDragStart={() => setDragging({ id: o.id, from: lane.id })}
                         onDragEnd={() => setDragging(null)}
+                        onDragOver={(e) => {
+                          if (!dragging || dragging.id === o.id) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDropBefore(o.id);
+                        }}
+                        onDragLeave={() => setDropBefore((d) => (d === o.id ? null : d))}
+                        onDrop={(e) => {
+                          if (!dragging || dragging.id === o.id) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (dragging.from !== lane.id) moveOrder(dragging.id, lane.id);
+                          if (manualOrder) placeInLane(lane.id, dragging.id, o.id);
+                          setDragging(null);
+                          setDropBefore(null);
+                        }}
                         title={`${CLASS_STYLE[cls].label} customer`}
                         style={{
                           cursor: "grab",
                           opacity: dragging && dragging.id === o.id ? 0.35 : 1,
+                          /* Where it will land. */
+                          boxShadow: dropBefore === o.id && dragging ? "0 -2px 0 0 var(--brand-primary)" : undefined,
                           borderRadius: 10,
                           /* The colour is who the order is for. The lane already
                              says what stage it is at, so the one thing a column
@@ -458,50 +579,13 @@ export default function Board() {
                             </span>
                           </div>
                         )}
-                        <OrderCard {...p} />
-                        {/* Who it is for, in words as well as the rail colour,
-                            and how it settles — neither of which the card has
-                            a slot for and both of which the yard asked to see
-                            at a glance. */}
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 5,
-                            padding: "4px 10px 2px",
-                            fontSize: 11,
-                            color: "var(--text-faint)",
-                          }}
-                        >
-                          <span style={{ width: 8, height: 8, borderRadius: 2, background: rail, flexShrink: 0 }} />
-                          <span style={{ color: rail, fontWeight: 600 }}>{CLASS_STYLE[cls].label}</span>
-                          {o.payment_method && (
-                            <>
-                              <span>·</span>
-                              <Icon name="credit-card" size={11} />
-                              {PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method}
-                            </>
-                          )}
-                        </div>
-                        {(orderItems[o.id] || []).some((i) => i.backordered) && (
-                          <div
-                            title="These lines are held for a later delivery and are left off the run sheet"
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 5,
-                              padding: "2px 10px 4px",
-                              fontSize: 11,
-                              color: "var(--feedback-warning)",
-                            }}
-                          >
-                            <Icon name="hourglass" size={11} />
-                            {(() => {
-                              const n = (orderItems[o.id] || []).filter((i) => i.backordered).length;
-                              return n === 1 ? "1 line on backorder" : `${n} lines on backorder`;
-                            })()}
-                          </div>
-                        )}
+                        <BoardCard
+                          {...p}
+                          classLabel={CLASS_STYLE[cls].label}
+                          classColour={rail}
+                          settles={o.payment_method ? PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method : undefined}
+                          backordered={(orderItems[o.id] || []).filter((i) => i.backordered).length}
+                        />
                       </div>
                     );
                   })}

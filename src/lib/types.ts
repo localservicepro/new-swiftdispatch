@@ -246,6 +246,9 @@ export interface Order {
   payment_type: PaymentType | null;
   payment_type_overridden: boolean;
   payment_method: PaymentMethod | null;
+  /* Manual position within its board column, lowest first. Null means the
+     delivery time decides. Cleared when the order changes stage. */
+  board_rank: number | null;
   payment_status: PaymentStatus;
   po_number: string | null;
   order_notes: string | null;
