@@ -16,7 +16,7 @@ import {
   dmy,
   isoFromDmy,
 } from "../lib/domain";
-import { PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
+import { PAYMENT_METHOD_LABEL, PAYMENT_TYPE_LABEL, type Order } from "../lib/types";
 import {
   addOrderItem,
   copyToAllSplits,
@@ -146,7 +146,7 @@ export default function OrderDrawer() {
       paymentStatus: o.payment_status,
       paymentType: o.payment_type ? PAYMENT_TYPE_LABEL[o.payment_type] : undefined,
       paymentTypeSource: o.payment_type_overridden ? "override" : "customer",
-      paymentMethod: o.payment_method ? o.payment_method.replace(/_/g, " ") : undefined,
+      paymentMethod: o.payment_method ? PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method : undefined,
       statementEligible: !!o.payment_type && o.payment_type !== "prepaid",
     };
   };
@@ -167,7 +167,7 @@ export default function OrderDrawer() {
         paymentStatus: master.payment_status,
         paymentType: master.payment_type ? PAYMENT_TYPE_LABEL[master.payment_type] : undefined,
         paymentTypeSource: "customer",
-        paymentMethod: master.payment_method ? master.payment_method.replace(/_/g, " ") : undefined,
+        paymentMethod: master.payment_method ? PAYMENT_METHOD_LABEL[master.payment_method] || master.payment_method : undefined,
         statementEligible: !!master.payment_type && master.payment_type !== "prepaid",
       }
     : null;

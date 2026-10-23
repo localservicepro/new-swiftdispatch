@@ -16,7 +16,7 @@ import {
   shortDate,
   suburbRate,
 } from "../lib/domain";
-import type { Order, OrderStatus } from "../lib/types";
+import { PAYMENT_METHOD_LABEL, type Order, type OrderStatus } from "../lib/types";
 import { assignCrew, moveOrder } from "../data/api";
 import { Card, DataTable, Icon, Input, OrderCard, Select, Tabs, Button } from "../design-system/components.js";
 import { GoodsCell, NotesCell } from "./OrderLines";
@@ -200,6 +200,7 @@ export default function Board() {
     { key: "notes", header: "Notes", width: tight ? 150 : 200 },
     { key: "window", header: "Window", muted: true, width: tight ? 125 : 150 },
     ...(tight ? [] : [{ key: "truck", header: "Truck", muted: true, width: 120 }]),
+    ...(tight ? [] : [{ key: "settles", header: "Settles", muted: true, width: 105 }]),
     { key: "total", header: "Total", numeric: true, align: "right", width: 105 },
   ];
   const boardRows = lanes.flatMap((lane) =>
@@ -222,6 +223,7 @@ export default function Board() {
         notes: <NotesCell delivery={c.delivery_notes} order={c.order_notes} />,
         window: `${shortDate(c.delivery_date)} · ${c.delivery_window || ""}`,
         truck: truckLabel(c.truck_id) || "Unassigned",
+        settles: c.payment_method ? PAYMENT_METHOD_LABEL[c.payment_method] || c.payment_method : "—",
         total: AUD(totalOf(c)),
       };
     })
@@ -457,6 +459,23 @@ export default function Board() {
                           </div>
                         )}
                         <OrderCard {...p} />
+                        {/* How the order settles, which the card itself has no
+                            slot for and the yard asked to see at a glance. */}
+                        {o.payment_method && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 5,
+                              padding: "4px 10px 2px",
+                              fontSize: 11,
+                              color: "var(--text-faint)",
+                            }}
+                          >
+                            <Icon name="credit-card" size={11} />
+                            {PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

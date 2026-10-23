@@ -15,6 +15,7 @@
    theme and layout can never leak into the page that comes out. */
 
 import { AUD, adjustmentOf, dmy, feeOf, goodsOf, type DeliveryPricing } from "../lib/domain";
+import { PAYMENT_METHOD_LABEL } from "../lib/types";
 import type { BusinessSettings, Customer, Order, OrderItem, PaymentSettings, Product, Suburb } from "../lib/types";
 import { PALM_LOGO_PNG } from "./logo";
 
@@ -169,8 +170,11 @@ export function invoiceSheet(input: InvoiceInput): string {
   const totalRow = (label: string, value: string, cls = "") =>
     `<tr class="${cls}"><th>${esc(label)}</th><td>${esc(value)}</td></tr>`;
 
-  const meta = (label: string, value: string) =>
-    `<tr><th>${esc(label)}</th><td colspan="3">${esc(value)}</td></tr>`;
+  /* `strong` is for the lines someone reads off the page in a hurry — the
+     address, the date and time, the phone — which the yard asked to stand out
+     from the paperwork around them. */
+  const meta = (label: string, value: string, strong = false) =>
+    `<tr><th>${esc(label)}</th><td colspan="3">${strong ? `<strong>${esc(value)}</strong>` : esc(value)}</td></tr>`;
 
   return `<section class="sheet">
     <header>
@@ -193,19 +197,20 @@ export function invoiceSheet(input: InvoiceInput): string {
         <td>${esc(dmy(order.placed_at.slice(0, 10)))}</td>
       </tr>
       ${contact?.name ? meta("Contact Name:", contact.name) : ""}
-      ${contact?.phone ? meta("Contact Phone:", contact.phone) : ""}
+      ${contact?.phone ? meta("Contact Phone:", contact.phone, true) : ""}
       ${meta("Business Name:", customer?.name || order.walk_in_name || "Cash sale")}
       ${
         multi
           ? groups
               .map((g, i) =>
-                meta(`Delivery ${letterOf(i)}:`, `${addressOf(g.order)} — ${scheduleText(g.order)}`)
+                meta(`Delivery ${letterOf(i)}:`, `${addressOf(g.order)} — ${scheduleText(g.order)}`, true)
               )
               .join("")
-          : meta(order.method === "delivery" ? "Delivery Address:" : "Collection:", addressLine) +
-            meta("Scheduled Date & Time:", scheduleText(order))
+          : meta(order.method === "delivery" ? "Delivery Address:" : "Collection:", addressLine, true) +
+            meta("Scheduled Date & Time:", scheduleText(order), true)
       }
       ${order.po_number ? meta("P/O No:", order.po_number) : ""}
+      ${order.payment_method ? meta("Settlement:", PAYMENT_METHOD_LABEL[order.payment_method] || order.payment_method) : ""}
     </table>
 
     <table class="goods">

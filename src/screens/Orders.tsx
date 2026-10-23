@@ -12,7 +12,7 @@ import {
   placedText,
   shortDate,
 } from "../lib/domain";
-import type { Order, OrderStatus } from "../lib/types";
+import { PAYMENT_METHOD_LABEL, type Order, type OrderStatus } from "../lib/types";
 import { deleteOrder } from "../data/api";
 import { Button, Card, DataTable, Icon, Input, Select } from "../design-system/components.js";
 import HistoryNotice from "./HistoryNotice";
@@ -188,6 +188,7 @@ export default function Orders() {
           placed: placedText(o.placed_at),
           status: STATUS_LABEL[o.status],
           payment: o.payment_status[0].toUpperCase() + o.payment_status.slice(1),
+          settles: o.payment_method ? PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method : "—",
           total: AUD(total),
           remove: (
             <span
@@ -277,6 +278,7 @@ export default function Orders() {
               ...(tight ? [] : [{ key: "placed", header: "Placed", muted: true, width: 145 }]),
               { key: "status", header: "Status", width: tight ? 100 : 120 },
               ...(tight ? [] : [{ key: "payment", header: "Payment", width: 105 }]),
+              ...(tight ? [] : [{ key: "settles", header: "Settles", muted: true, width: 110 }]),
               { key: "total", header: "Total", numeric: true, align: "right", width: 105 },
               { key: "remove", header: "", width: 34 },
             ]}

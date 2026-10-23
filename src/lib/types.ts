@@ -45,6 +45,12 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "on_account", label: "On account" },
 ];
 
+/* The stored value, spelt out. Derived from the list above so there is one
+   source for what a method is called wherever it is printed. */
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = Object.fromEntries(
+  PAYMENT_METHODS.map((m) => [m.value, m.label])
+) as Record<PaymentMethod, string>;
+
 export const PAYMENT_TYPE_LABEL: Record<PaymentType, string> = {
   prepaid: "Prepaid",
   account_7: "7-day account",

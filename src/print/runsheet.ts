@@ -2,11 +2,11 @@
 
    It is not a small invoice. An invoice is for the customer and is about money;
    a run sheet is for the loader and the driver and is about goods, gates and
-   getting a signature, so it carries no prices at all. What it does carry, in
-   the order the job happens in:
+   getting a signature. What it carries, in the order the job happens in:
 
      what to load, in type big enough to read across a yard, with a box to tick
-     as each thing goes on;
+     as each thing goes on, and the unit price beside it — the yard asked for
+     that in place of the SKU, which told the loader nothing;
 
      where it is going and who to ring when nobody answers the gate;
 
@@ -20,7 +20,7 @@
    One sheet per delivery. A split order prints one per drop, because each drop
    is a separate run with its own address and its own signature. */
 
-import { dmy, qtyText } from "../lib/domain";
+import { AUD, dmy, qtyText } from "../lib/domain";
 import type { BusinessSettings, Customer, Order, OrderItem, Product, Suburb, TeamMember, Truck } from "../lib/types";
 import { PALM_LOGO_PNG } from "./logo";
 
@@ -91,13 +91,6 @@ function sheet(
     ? [o.street, suburb ? `${suburb.name} ${suburb.state} ${suburb.postcode}` : null].filter(Boolean).join(", ")
     : "Collection from the yard";
 
-  /* Every phone on the account, not just the ordering contact: a driver at a
-     locked gate rings whoever answers. */
-  const phones = (customer?.contacts || [])
-    .filter((c) => c.phone)
-    .map((c) => `${esc(c.name)} ${esc(c.phone)}`)
-    .join(" &nbsp;·&nbsp; ");
-
   const lines = g.items.length
     ? g.items
         .map((i) => {
@@ -106,11 +99,11 @@ function sheet(
             <td class="tick"></td>
             <td class="qty">${esc(qtyText(Number(i.qty), p?.unit || "each"))}</td>
             <td class="prod">${esc(p?.name || i.description || "Item")}</td>
-            <td class="sku">${esc(p?.sku || "")}</td>
+            <td class="price">${esc(AUD(Number(i.unit_price)))} <span class="per">/ ${esc(p?.unit || "each")}</span></td>
           </tr>`;
         })
         .join("")
-    : `<tr><td class="tick"></td><td class="qty">—</td><td class="prod">No items recorded on this order</td><td class="sku"></td></tr>`;
+    : `<tr><td class="tick"></td><td class="qty">—</td><td class="prod">No items recorded on this order</td><td class="price"></td></tr>`;
 
   const notes = [
     o.delivery_notes ? { label: "For the driver", text: o.delivery_notes } : null,
@@ -136,7 +129,6 @@ function sheet(
       customer ? ` <span class="faint">Acct ${esc(customer.account_number)}</span>` : ""
     }</td></tr>
     ${contact ? `<tr><th>Ordered by</th><td>${esc(contact.name)}${contact.phone ? " — " + esc(contact.phone) : ""}</td></tr>` : ""}
-    ${phones ? `<tr><th>Phones</th><td>${phones}</td></tr>` : ""}
     <tr><th>${isDelivery ? "Deliver to" : "Collection"}</th><td class="where">${esc(where)}</td></tr>
     <tr><th>When</th><td>${esc(scheduleText(o))}</td></tr>
     <tr><th>Truck &amp; driver</th><td>${truck ? esc(`${truck.rego} — ${truck.type}`) : "<span class='unset'>Not assigned</span>"}${
@@ -146,7 +138,7 @@ function sheet(
   </table>
 
   <table class="goods">
-    <thead><tr><th class="tick">✓</th><th class="qty">Qty</th><th class="prod">Product</th><th class="sku">SKU</th></tr></thead>
+    <thead><tr><th class="tick">✓</th><th class="qty">Qty</th><th class="prod">Product</th><th class="price">Unit price</th></tr></thead>
     <tbody>${lines}</tbody>
   </table>
 
@@ -207,7 +199,8 @@ const STYLE = `
   /* Loading is done standing up with the sheet at arm's length. */
   table.goods td.qty { font-size: 16px; font-weight: bold; width: 110px; }
   table.goods td.prod { font-size: 15px; }
-  table.goods td.sku { font-size: 11px; color: #555; width: 110px; text-align: right; }
+  table.goods td.price { font-size: 12px; width: 130px; text-align: right; white-space: nowrap; }
+  table.goods td.price .per { font-size: 10px; color: #555; }
   table.goods th.tick, table.goods td.tick { width: 34px; }
   table.goods td.tick::before {
     content: ""; display: block; width: 17px; height: 17px; border: 1.5px solid #000;
