@@ -77,9 +77,9 @@ await hold.click(); await pause(1800);
 await p.getByRole('button', { name: 'Delivery', exact: true }).last().click(); await pause(1200);
 await p.locator('span:text-is("Date") + div').first().click(); await pause(1200);
 const overlay = p.locator('div[style*="z-index: 26"]').first();
-const monthHdr = overlay.locator('text=/^(January|February|March|April|May|June|July|August|September|October|November|December) \\d{4}$/').first();
-await monthHdr.locator('xpath=following-sibling::*[1]').click(); await pause(700);
-await overlay.locator('text=/^12$/').last().click(); await pause(1200);
+/* A later day this month — the picker remembers the month it was left on,
+   and the report ranges later in the recording expect this month's orders. */
+await overlay.locator('text=/^28$/').last().click(); await pause(1200);
 const fee = p.locator('label', { hasText: /^Delivery fee$/ }).locator('input').first();
 const feeField = (await fee.count()) ? fee : p.locator('input[inputmode="decimal"]:visible').last();
 await feeField.click(); await p.keyboard.press('Control+A'); await p.keyboard.type('25', { delay: 90 }); await feeField.press('Tab'); await pause(1200);
