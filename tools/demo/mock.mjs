@@ -37,7 +37,7 @@ export const row = (t, i) => {
     variant_id:null, description:null, qty: 0.5+(i%4), unit_price: 60+(i%40), line_total: (0.5+(i%4))*(60+(i%40)), backordered: i===3,
     created_at:'2026-09-01T00:00:00Z' };
   if (t === 'product_categories') return { id:'g'+i, name:(['Bulk Products','Bag Products','Cement','Mulch','Sand','Tool Shop'][i] || ('Category ' + i)), sort_order:i };
-  if (t === 'suburbs') return { id:'s'+i, name:['Surrey Hills','Box Hill','Camberwell','Balwyn','Kew','Hawthorn'][i%6],
+  if (t === 'suburbs') return { id:'s'+i, name:['Mont Albert','Box Hill','Camberwell','Balwyn','Kew','Hawthorn'][i%6],
     postcode: i===5 ? '2000' : '312'+(i%6), state: i===5 ? 'NSW' : 'VIC', delivery_fee:15+i, active:true, created_at:'2026-01-01T00:00:00Z' };
   if (t === 'customers') return { id:'c'+i, account_number:'108'+(10+i), name:CUSTS[i%8], entity: i%3===1?'Individual':'Company',
     abn:null, tier: i%2?'Trade':'Retail', billing: i%3===0?'account':'prepaid', terms_days: i%3===0?(i===3?7:30):null, card_on_file: i===4,
@@ -45,7 +45,7 @@ export const row = (t, i) => {
     billing_street:null, billing_suburb_id:null, portal_enabled:false, portal_pin:null, myob_uid:null,
     archived_at:null, created_at:'2024-01-01T00:00:00Z' };
   if (t === 'customer_contacts') return { id:'k'+i, customer_id:'c'+(i%8), name:'Contact '+i, phone:'041200000'+i, email:null, roles:['Orders'] };
-  if (t === 'customer_sites') return { id:'st'+i, customer_id:'c'+(i%8), label: i<3 ? 'Back paddock' : 'Surrey Hills',
+  if (t === 'customer_sites') return { id:'st'+i, customer_id:'c'+(i%8), label: i<3 ? 'Back paddock' : 'Mont Albert',
     street:(20+i)+' Union Road', suburb_id:'s'+(i%6), is_default: i<8, auto_captured: i>=3,
     last_used_at:'2026-0'+(1+(i%8))+'-01T00:00:00Z', created_at:'2025-01-01T00:00:00Z' };
   if (t === 'trucks') return { id:'t'+i, rego:'ABC'+(100+i), type:'medium', status:'Available',

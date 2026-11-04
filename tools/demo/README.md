@@ -22,3 +22,15 @@ Use for an order (adjustment and prices carried), the quote reading
 preview server on :4173:
 
     node tools/demo/check_quotes.mjs
+
+## record_quotes.mjs, cards.mjs, assemble.py
+
+The third recording: quotes. `record_quotes.mjs` films the flow against the
+mock into `raw-quotes/` with `marks.json` for the scene cuts; `cards.mjs`
+makes the title and end cards; `assemble.py` cuts the scenes, lays one
+narration file per scene under them (`s1.wav` …), freezes footage that is
+shorter than its words, and joins the lot:
+
+    node tools/demo/record_quotes.mjs
+    node tools/demo/cards.mjs raw-quotes "Quotes" "Save as quote, track it, use it for an order"
+    python3 tools/demo/assemble.py raw-quotes vo raw-quotes quotes.mp4

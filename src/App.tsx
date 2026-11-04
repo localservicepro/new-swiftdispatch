@@ -44,6 +44,7 @@ function Shell() {
   const theme = useApp((s) => s.theme);
   const setTheme = useApp((s) => s.setTheme);
   const live = useApp((s) => s.live);
+  const business = useApp((s) => s.business);
   const toasts = useApp((s) => s.toasts);
   const dismissToast = useApp((s) => s.dismissToast);
   const boardCount = useApp(
@@ -126,7 +127,7 @@ function Shell() {
         onSelect={(id: string) => ui.navigateTo(id)}
         collapsed={ui.collapsed}
         brandName="SwiftDispatch Pro"
-        brandSub="Surrey Hills Garden Supplies"
+        brandSub={business?.name || "Order desk & dispatch"}
         logoSrc="/swiftdispatch-mark.png"
         style={{ flexShrink: 0, height: "100%", position: "relative", zIndex: 3 }}
       />
