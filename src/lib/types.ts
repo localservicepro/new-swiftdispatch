@@ -270,7 +270,70 @@ export interface Order {
   myob_number: string | null;
   myob_pushed_at: string | null;
   myob_error: string | null;
+  /* The quote this order was raised from, if any. The invoice prints it. */
+  quote_id?: string | null;
   deleted_at: string | null;
+}
+
+export type QuoteStatus = "open" | "sent" | "accepted" | "declined" | "converted";
+
+/* A priced offer written up on the New order screen and saved against the
+   customer instead of being created. Its own record, never a kind of order:
+   nothing here reaches the board, reports, payments or statements. */
+export interface Quote {
+  id: string;
+  quote_number: string;
+  revision: number;
+  status: QuoteStatus;
+  customer_id: string;
+  contact_id: string | null;
+  method: FulfilmentMethod;
+  /* The delivery drafts as the New order screen holds them, so the quote can
+     be put back on that screen and taken as an order. */
+  deliveries: QuoteDelivery[];
+  settle_method: PaymentMethod | null;
+  po_number: string | null;
+  order_notes: string | null;
+  delivery_notes: string | null;
+  adjustment_type: "percent" | "amount" | null;
+  adjustment_value: number | null;
+  fuel_surcharge: number;
+  /* Locked as written — what the customer was told. */
+  quoted_total: number;
+  valid_until: string;
+  sent_at: string | null;
+  accepted_at: string | null;
+  declined_at: string | null;
+  declined_reason: string | null;
+  converted_at: string | null;
+  order_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at?: string;
+  deleted_at: string | null;
+}
+
+export interface QuoteDelivery {
+  letter: string;
+  dateIso: string;
+  window: string;
+  street: string;
+  suburbId: string | null;
+  fee: number;
+  feeSource: FeeSource;
+  truckId: string | null;
+}
+
+export interface QuoteItem {
+  id: string;
+  quote_id: string;
+  product_id: string | null;
+  variant_id: string | null;
+  description: string | null;
+  qty: number;
+  unit_price: number;
+  line_total: number;
+  delivery_letter: string;
 }
 
 export interface Payment {
@@ -315,6 +378,9 @@ export interface BusinessSettings {
   bank_account_no: string | null;
   payment_reference_note: string | null;
   card_surcharge_note: string | null;
+  /* How long a quote stands, and the terms printed at its foot. */
+  quote_valid_days: number;
+  quote_terms: string | null;
 }
 
 export interface PaymentSettings {

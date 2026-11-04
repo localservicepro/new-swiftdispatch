@@ -1,6 +1,6 @@
 import { supabase } from "../lib/supabase";
 import { useApp } from "../store/store";
-import type { Customer, CustomerContact, CustomerSite, Order, OrderItem, Payment, Product, Special, Suburb, TeamMember, Truck } from "../lib/types";
+import type { Customer, CustomerContact, CustomerSite, Order, OrderItem, Payment, Product, Quote, QuoteItem, Special, Suburb, TeamMember, Truck } from "../lib/types";
 
 /* Live updates between screens.
 
@@ -57,6 +57,22 @@ export function startLive() {
             byOrder[it.order_id] = upsert(byOrder[it.order_id] || [], it);
           }
           return { orderItems: byOrder };
+        });
+        break;
+      }
+      case "quotes":
+        set((s) => ({ quotes: gone || (row as Quote).deleted_at ? without(s.quotes, id) : upsert(s.quotes, row as Quote) }));
+        break;
+      case "quote_items": {
+        set((s) => {
+          const byQuote = { ...s.quoteItems };
+          if (gone) {
+            for (const k of Object.keys(byQuote)) if (byQuote[k].some((i) => i.id === id)) byQuote[k] = byQuote[k].filter((i) => i.id !== id);
+          } else {
+            const it = row as QuoteItem;
+            byQuote[it.quote_id] = upsert(byQuote[it.quote_id] || [], it);
+          }
+          return { quoteItems: byQuote };
         });
         break;
       }
@@ -132,6 +148,8 @@ export function startLive() {
   for (const table of [
     "orders",
     "order_items",
+    "quotes",
+    "quote_items",
     "customers",
     "customer_contacts",
     "customer_sites",

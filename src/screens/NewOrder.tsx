@@ -24,7 +24,7 @@ import {
   WINDOWS_60, productMatches } from "../lib/domain";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, type PaymentMethod } from "../lib/types";
 import type { OrderItem } from "../lib/types";
-import { addContact, createOrder, recentSites } from "../data/api";
+import { addContact, createOrder, createQuote, recentSites } from "../data/api";
 import {
   Alert,
   Badge,
@@ -79,7 +79,13 @@ export default function NewOrder() {
      through either: somebody has to say, on this order, that they know. */
   const [creditOverride, setCreditOverride] = useState(false);
 
-  const priceOf = (pid: string) => unitPrice(products.find((p) => p.id === pid), specials, () => null);
+  const listPriceOf = (pid: string) => unitPrice(products.find((p) => p.id === pid), specials, () => null);
+  /* A line off a quote keeps the price the customer was given. */
+  const priceOf = (pid: string) => {
+    const l = cart.find((x) => x.productId === pid && x.quotedPrice != null);
+    return l ? Number(l.quotedPrice) : listPriceOf(pid);
+  };
+  const fromQuote = ui.fromQuoteId ? app.quotes.find((q) => q.id === ui.fromQuoteId) || null : null;
   const product = (pid: string) => products.find((p) => p.id === pid);
   const catName = (id: string | null) => categories.find((c) => c.id === id)?.name || "—";
 
@@ -108,6 +114,12 @@ export default function NewOrder() {
   const feeTotal = yard || !isDelivery ? 0 : drafts.reduce((s, d) => s + draftFeeOf(d), 0);
   const fuelTotal = yard || !isDelivery ? 0 : fuelOf(paySettings) * drafts.length;
   const [adjustValue, setAdjustValue] = useState("");
+  /* A quote being taken as an order brings its adjustment with it. */
+  useEffect(() => {
+    if (ui.pendingAdjust == null) return;
+    setAdjustValue(ui.pendingAdjust);
+    ui.set({ pendingAdjust: null });
+  }, [ui.pendingAdjust]);
   const adjustNum = parseFloat(adjustValue) || 0;
   /* An adjustment goes either way: a discount off the goods or a surcharge on
      top. The value stored on the order is signed — negative discounts. */
@@ -356,20 +368,66 @@ export default function NewOrder() {
 
   const creditHeld = quickBlock.blocked && !creditOverride;
   const createDisabled = creating || lines.length === 0 || emptyDrafts.length > 0 || creditHeld || badSuburbs.length > 0;
+  /* A quote commits nothing, so stop credit and an unpriced suburb do not
+     hold it — only a customer to save it against and something to price. */
+  const quoteDisabled = creating || lines.length === 0 || emptyDrafts.length > 0 || !effectiveCustomer;
+
+  const orderInput = () => ({
+    mode: ui.orderMode,
+    customer: effectiveCustomer,
+    contactId: ui.orderContact,
+    walkInName: ui.yardWalkInName,
+    method: (yard ? "pickup" : ui.fulfilMethod) as "delivery" | "pickup",
+    drafts,
+    cart,
+    settleMethod: ui.settleMethod,
+    poNumber: ui.poNumber,
+    deliveryNotes: ui.deliveryNotesDraft,
+    adjustmentType: adjustNum > 0 ? ((ui.adjustType === "Percent" ? "percent" : "amount") as "percent" | "amount") : null,
+    adjustmentValue: adjustNum > 0 ? adjustSigned : null,
+    fuelSurcharge: yard || !isDelivery ? 0 : fuelOf(paySettings),
+  });
+
+  const clearOrder = () => {
+    ui.set({
+      cart: [],
+      drafts: [blankDraft("A")],
+      activeDraft: "A",
+      orderStep: 1,
+      poNumber: "",
+      orderNotesDraft: "",
+      deliveryNotesDraft: "",
+      settleMethod: null,
+      settleMethodAuto: false,
+      yardCustomer: false,
+      yardWalkInName: "",
+      customerId: null,
+      orderContact: null,
+      fromQuoteId: null,
+    });
+    setCreditOverride(false);
+    setAdjustValue("");
+  };
+
+  const doSaveQuote = async () => {
+    if (quoteDisabled || !effectiveCustomer) return;
+    setCreating(true);
+    const quote = await createQuote({ ...orderInput(), orderNotes: ui.orderNotesDraft });
+    setCreating(false);
+    if (quote) {
+      app.toast({ tone: "success", title: `${quote.quote_number} saved`, description: `Under ${effectiveCustomer.name} › Quotes, valid until ${dmy(quote.valid_until)}.` });
+      clearOrder();
+      /* Where it went: the customer's record, open on the quote. */
+      ui.set({ nav: "customers", custId: effectiveCustomer.id, custTab: "quotes" });
+    }
+  };
 
   const doCreate = async () => {
     if (createDisabled) return;
     setCreating(true);
     const order = await createOrder({
-      mode: ui.orderMode,
-      customer: effectiveCustomer,
-      contactId: ui.orderContact,
-      walkInName: ui.yardWalkInName,
-      method: yard ? "pickup" : ui.fulfilMethod,
-      drafts,
-      cart,
-      settleMethod: ui.settleMethod,
-      poNumber: ui.poNumber,
+      ...orderInput(),
+      quoteId: ui.fromQuoteId,
       orderNotes: [
         ui.orderNotesDraft,
         quickBlock.blocked && creditOverride
@@ -378,36 +436,22 @@ export default function NewOrder() {
       ]
         .filter(Boolean)
         .join("\n"),
-      deliveryNotes: ui.deliveryNotesDraft,
-      adjustmentType: adjustNum > 0 ? (ui.adjustType === "Percent" ? "percent" : "amount") : null,
-      adjustmentValue: adjustNum > 0 ? adjustSigned : null,
-      fuelSurcharge: yard || !isDelivery ? 0 : fuelOf(paySettings),
     });
     setCreating(false);
     if (order) {
-      app.toast({ tone: "success", title: `${order.order_number} created` });
+      app.toast({
+        tone: "success",
+        title: `${order.order_number} created`,
+        description: fromQuote ? `Taken from quote ${fromQuote.quote_number}.` : undefined,
+      });
+      /* The next order is for the next customer. Carrying the last one over
+         saved a search and cost the yard orders billed to the wrong account,
+         because the name sits up in the corner where nobody rereads it. */
+      clearOrder();
       ui.set({
         printPrompt: { orderId: order.id, orderNumber: order.order_number, splits: isSplitDraft ? drafts.length : 0 },
         nav: yard ? "neworder" : "board",
-        cart: [],
-        drafts: [blankDraft("A")],
-        activeDraft: "A",
-        orderStep: 1,
-        poNumber: "",
-        orderNotesDraft: "",
-        deliveryNotesDraft: "",
-        settleMethod: null,
-        settleMethodAuto: false,
-        yardCustomer: false,
-        yardWalkInName: "",
-        /* The next order is for the next customer. Carrying the last one over
-           saved a search and cost the yard orders billed to the wrong account,
-           because the name sits up in the corner where nobody rereads it. */
-        customerId: null,
-        orderContact: null,
       });
-      setCreditOverride(false);
-      setAdjustValue("");
     }
   };
 
@@ -690,6 +734,20 @@ export default function NewOrder() {
           style={{ flex: "1 1 300px", minWidth: 0 }}
         />
       </div>
+
+      {fromQuote && !yard && (
+        <Alert tone="info" title={`Taking quote ${fromQuote.quote_number} as an order`} icon="file-text">
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ flex: 1, minWidth: 180 }}>
+              Lines are at the quoted prices{fromQuote.valid_until < new Date().toISOString().slice(0, 10) ? " — the quote has expired, so check them" : ""}. Anything you add is priced off
+              the list. Create order goes through the usual checks and marks the quote as taken.
+            </span>
+            <Button variant="outline" size="sm" onClick={() => ui.set({ cart: cart.map((l) => ({ ...l, quotedPrice: null })) })}>
+              Use today's prices
+            </Button>
+          </div>
+        </Alert>
+      )}
 
       {ui.savedDraft && lines.length === 0 && ui.orderStep === 1 && (
         <Alert
@@ -1017,6 +1075,11 @@ export default function NewOrder() {
                         </div>
                         <div className="tabular" style={{ fontSize: 12, color: "var(--text-faint)" }}>
                           {AUD0(l.price)} per {l.unit}
+                          {cart[l.index]?.quotedPrice != null && Math.abs(listPriceOf(l.id) - l.price) >= 0.005 && (
+                            <span style={{ color: "var(--attention)" }} title="The price the customer was quoted, kept while the line is in the cart">
+                              {" "}· quoted, list {AUD0(listPriceOf(l.id))}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
@@ -1516,6 +1579,19 @@ export default function NewOrder() {
                         ? `Create ${drafts.length} split orders`
                         : "Create order"}
                 </Button>
+                {!yard && (
+                  <Button
+                    variant="outline"
+                    size="md"
+                    iconLeft="file-text"
+                    fullWidth
+                    disabled={quoteDisabled}
+                    title={!effectiveCustomer ? "Pick a customer to save a quote against" : fromQuote ? "Saves a fresh quote; the one this came from is left as it is" : "Saves this as a quote under the customer instead of creating an order"}
+                    onClick={() => void doSaveQuote()}
+                  >
+                    Save as quote
+                  </Button>
+                )}
                 <Button variant="ghost" size="md" iconLeft="arrow-left" fullWidth onClick={() => ui.set({ orderStep: 1 })}>
                   Back
                 </Button>

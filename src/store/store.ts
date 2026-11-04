@@ -15,6 +15,8 @@ import type {
   PaymentSettings,
   Product,
   ProductCategory,
+  Quote,
+  QuoteItem,
   Special,
   Statement,
   Suburb,
@@ -33,6 +35,9 @@ export interface CartLine {
   qty: number;
   to: string; // draft letter
   typed?: string | null;
+  /* Set when the line came off a quote: the price the customer was given,
+     used in place of the live one for as long as the line is in the cart. */
+  quotedPrice?: number | null;
 }
 
 export interface DeliveryDraft {
@@ -77,6 +82,9 @@ interface AppState {
   customers: Customer[];
   orders: Order[];
   orderItems: Record<string, OrderItem[]>;
+  /* Quotes are few and live under the customer, so the lot is loaded. */
+  quotes: Quote[];
+  quoteItems: Record<string, QuoteItem[]>;
   payments: Payment[];
   statements: Statement[];
   business: BusinessSettings | null;
@@ -152,6 +160,8 @@ export const useApp = create<AppState>((set, get) => ({
   customers: [],
   orders: [],
   orderItems: {},
+  quotes: [],
+  quoteItems: {},
   payments: [],
   statements: [],
   business: null,
@@ -217,6 +227,7 @@ export const useApp = create<AppState>((set, get) => ({
         sites,
         orders,
         payments,
+        quotes,
         statements,
         business,
         paySettings,
@@ -248,6 +259,7 @@ export const useApp = create<AppState>((set, get) => ({
             .order("id")
         ),
         pageAll(() => supabase.from("payments").select("*", { count: "exact" }).order("created_at", { ascending: false }).order("id")),
+        pageAll(() => supabase.from("quotes").select("*", { count: "exact" }).is("deleted_at", null).order("created_at").order("id")),
         supabase.from("statements").select("*").order("generated_at", { ascending: false }),
         supabase.from("business_settings").select("*").maybeSingle(),
         supabase.from("payment_settings").select("*").maybeSingle(),
@@ -287,6 +299,12 @@ export const useApp = create<AppState>((set, get) => ({
       items.forEach((i) => {
         (itemsByOrder[i.order_id] = itemsByOrder[i.order_id] || []).push(i);
       });
+      const quoteRows = (quotes.data || []) as Quote[];
+      const qItems = quoteRows.length ? await fetchIn<QuoteItem>("quote_items", "quote_id", quoteRows.map((q) => q.id)) : [];
+      const itemsByQuote: Record<string, QuoteItem[]> = {};
+      qItems.forEach((i) => {
+        (itemsByQuote[i.quote_id] = itemsByQuote[i.quote_id] || []).push(i);
+      });
 
       set({
         suburbs: (suburbs.data || []) as Suburb[],
@@ -308,6 +326,8 @@ export const useApp = create<AppState>((set, get) => ({
         })),
         orders: (orders.data || []) as Order[],
         orderItems: itemsByOrder,
+        quotes: quoteRows,
+        quoteItems: itemsByQuote,
         payments: (payments.data || []) as Payment[],
         statements: (statements.data || []) as Statement[],
         business: (business.data || null) as BusinessSettings | null,

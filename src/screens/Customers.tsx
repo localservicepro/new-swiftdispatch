@@ -3,6 +3,7 @@ import { useApp } from "../store/store";
 import HistoryNotice from "./HistoryNotice";
 import NewCustomerModal from "./NewCustomerModal";
 import { ContactsEditor, CustomerDetails } from "./CustomerDetails";
+import CustomerQuotes, { quoteCountFor } from "./CustomerQuotes";
 import { useUi } from "../store/ui";
 import { AUD, AUD0, blockedState, customerBadgeType, dmy, orderTotal, pickableSuburbs, settleLabelOf, suburbRate } from "../lib/domain";
 import type { Customer, CustomerSite, Suburb } from "../lib/types";
@@ -505,6 +506,7 @@ function CustomerDrawer(props: {
             { id: "overview", label: "Overview" },
             { id: "contacts", label: "Contacts", count: cust.contacts.length },
             { id: "orders", label: "Orders", count: custOrders.length },
+            { id: "quotes", label: "Quotes", count: quoteCountFor(app.quotes, cust.id) },
             { id: "credit", label: cust.billing === "account" ? "Credit & statements" : "Credit" },
           ]}
           activeId={tab}
@@ -671,6 +673,8 @@ function CustomerDrawer(props: {
             </Card>
           </div>
         )}
+
+        {tab === "quotes" && <CustomerQuotes cust={cust} />}
 
         {tab === "credit" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

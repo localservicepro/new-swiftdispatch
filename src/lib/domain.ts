@@ -3,6 +3,7 @@
    stop-credit blocking. */
 
 import type {
+  Quote,
   Customer,
   Order,
   OrderItem,
@@ -508,4 +509,24 @@ export const productMatches = (p: Pick<Product, "name" | "sku">, query: string):
     .map((w) => w[0].toLowerCase())
     .join("");
   return initials.startsWith(q);
+};
+
+/* ---------- quotes ---------- */
+
+/* What a quote is right now. "Expired" is read off the date rather than
+   stored, so nothing has to run overnight to keep it true; a quote already
+   taken as an order or turned down is past expiring. */
+export type QuoteState = Quote["status"] | "expired";
+export const quoteState = (q: Pick<Quote, "status" | "valid_until">, todayIso = new Date().toISOString().slice(0, 10)): QuoteState => {
+  if (q.status === "converted" || q.status === "declined") return q.status;
+  return q.valid_until < todayIso ? "expired" : q.status;
+};
+
+export const QUOTE_STATE_LABEL: Record<QuoteState, string> = {
+  open: "Open",
+  sent: "Sent",
+  accepted: "Accepted",
+  declined: "Declined",
+  converted: "Taken as order",
+  expired: "Expired",
 };

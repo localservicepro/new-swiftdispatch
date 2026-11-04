@@ -8,6 +8,7 @@ import { N, row } from './mock.mjs';
 export async function setup(p, { signedIn = false } = {}) {
   let seq = 200;
   let ordNo = 91500;
+  let qteNo = 1001;
   const CAP = 1000;
   await p.route('https://fonts.googleapis.com/**', r => r.abort());
   await p.route('**/rest/v1/**', async (route) => {
@@ -21,9 +22,11 @@ export async function setup(p, { signedIn = false } = {}) {
       const out = rows.map((r) => {
         const base = table === 'orders' ? { ...row('orders', 0), id: 'n' + (seq++), order_number: 'ORD-9' + (1000 + seq), status: 'preparing', kind: 'standard', parent_order_id: null, placed_at: now, created_at: now, updated_at: now, truck_id: null, driver_id: null, delivery_notes: null, order_notes: null, processed_at: null, board_rank: null, paid_at: null, booked_total: null }
           : table === 'order_items' ? { id: 'ni' + (seq++), variant_id: null, description: null, backordered: false, created_at: now }
+          : table === 'quotes' ? { id: 'q' + (seq++), revision: 1, status: 'open', sent_at: null, accepted_at: null, declined_at: null, declined_reason: null, converted_at: null, order_id: null, created_at: now, updated_at: now, deleted_at: null }
+          : table === 'quote_items' ? { id: 'qi' + (seq++), variant_id: null, description: null, created_at: now }
           : { id: 'x' + (seq++), created_at: now };
         const merged = { ...base, ...r };
-        if (table === 'order_items') merged.line_total = Math.round(Number(merged.qty) * Number(merged.unit_price) * 100) / 100;
+        if (table === 'order_items' || table === 'quote_items') merged.line_total = Math.round(Number(merged.qty) * Number(merged.unit_price) * 100) / 100;
         return merged;
       });
       return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(Array.isArray(body) ? out : out[0]) });
@@ -40,6 +43,7 @@ export async function setup(p, { signedIn = false } = {}) {
   await p.route('**/rest/v1/rpc/**', r => {
     const u = r.request().url();
     if (u.includes('next_order_number')) return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('ORD-' + (ordNo++)) });
+    if (u.includes('next_quote_number')) return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('QTE-' + (qteNo++)) });
     return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'm0', name: 'Logan Reid', role: 'super_admin' }]) });
   });
 

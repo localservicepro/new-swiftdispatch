@@ -12,3 +12,13 @@ resumes it, checks out a single delivery, then builds and splits a second order.
 Writes one `.webm` and `marks.json` (scene start/end in ms) to `DEMO_OUT`.
 Playwright's video recorder needs an ffmpeg binary; the system one works
 when linked at `$PLAYWRIGHT_BROWSERS_PATH/ffmpeg-<rev>/ffmpeg-linux`.
+
+## check_quotes.mjs
+
+A browser check of the quote flow against the same mock: Save as quote on
+step 2, the Quotes tab on the customer, the printed quotation, Mark sent,
+Use for an order (adjustment and prices carried), the quote reading
+"Taken as order" afterwards, and nothing of it on the board. Run it with the
+preview server on :4173:
+
+    node tools/demo/check_quotes.mjs

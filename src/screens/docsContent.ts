@@ -228,6 +228,9 @@ export const FUNCTION_GROUPS: { group: string; items: Fn[] }[] = [
       { name: "Order adjustment", where: "New order, step 2", what: "Discount or amendment, as a percent or an amount. Called an amendment, not a surcharge — the fuel and card surcharges are different things." },
       { name: "Typed quantities", where: "New order · Orders › Items", what: "Type the amount on a product card, in the cart, or as \"0.5*sand\" in the search. A third of a metre is a real order and is taken as typed." },
       { name: "Create a customer mid-order", where: "New order › New", what: "Adds a customer without leaving the order, and puts them straight on it." },
+      { name: "Save as quote", where: "New order, step 2", what: "Writes the order up as a quote against the customer instead of creating it. Prices, fees and the surcharge are locked as written." },
+      { name: "Quotes on the customer", where: "Customers › Quotes", what: "Every quote for the customer: print it, mark it sent or accepted, decline it, or use it for an order. Expired reads off the valid-until date." },
+      { name: "Use a quote for an order", where: "Customers › Quotes › Use for an order", what: "Puts the quote back on the New order screen at the quoted prices. The order is created through the same checks as any other, and the quote records which order it became." },
       { name: "Order over stop credit", where: "New order, customer card", what: "Takes the order anyway and writes the override into the order notes, so it reads as a decision." },
       { name: "Dispatch board", where: "Dispatch board", what: "Drag orders between stages; assign truck and driver." },
       { name: "Delivery photos (POD)", where: "Driver portal", what: "Driver marks delivered and attaches a photo." },
@@ -346,6 +349,11 @@ export const RULES: Rule[] = [
     title: "The suburb sets the delivery fee",
     what: "A delivery's fee comes from its suburb. A fee that differs is recorded as manual, so it is visible as a decision.",
     why: "Stops the same run being priced three ways by three people.",
+  },
+  {
+    title: "A quote is not an order",
+    what: "A quote is its own record under the customer. Nothing on it reaches the dispatch board, run sheets, reports, payments or statements, and it takes no order number. Taking it as an order creates a real order through the usual checks, at the quoted prices.",
+    why: "A priced offer the customer never came back on must not look like work to do or money owed.",
   },
   {
     title: "A suburb with no fee blocks orders to it",

@@ -3,10 +3,11 @@
 
 import { supabase } from "../lib/supabase";
 import { persist, useApp, type DeliveryDraft, type CartLine } from "../store/store";
-import { derivePaymentType, feeOf, orderTotal, unitFor, roundToStep, unitPrice } from "../lib/domain";
+import { derivePaymentType, feeOf, orderTotal, resolvedSuburbFee, unitFor, roundToStep, unitPrice } from "../lib/domain";
 import { pushBlockers, readyForMyob } from "../lib/myob";
 import { pushContextFor, pushOrdersToMyob } from "./myob";
 import { invoiceDocument, invoiceSheet, invoiceTitle } from "../print/invoice";
+import { quoteBreakdown, quoteHtml } from "../print/quote";
 import { runSheetHtml, type RunSheetGroup } from "../print/runsheet";
 import { statementHtml, type StatementAgeing, type StatementLine } from "../print/statement";
 import { printDocument } from "../print/print";
@@ -18,6 +19,9 @@ import type {
   OrderItem,
   OrderStatus,
   Product,
+  Quote,
+  QuoteItem,
+  QuoteStatus,
   Special,
   Suburb,
   TeamMember,
@@ -262,6 +266,8 @@ export interface CreateOrderInput {
   adjustmentType: "percent" | "amount" | null;
   adjustmentValue: number | null;
   fuelSurcharge: number;
+  /* The quote this order is being taken from, if any. */
+  quoteId?: string | null;
 }
 
 /* An order taken at the counter or over the phone is confirmed by the act of
@@ -283,8 +289,10 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
   }
   const baseNumber = numData as string;
 
-  const priceFor = (productId: string) =>
-    unitPrice(s.products.find((p) => p.id === productId), s.specials, () => null);
+  /* A line off a quote keeps the price the customer was given; anything added
+     since is priced off the list as usual. */
+  const priceFor = (l: CartLine) =>
+    l.quotedPrice != null ? Number(l.quotedPrice) : unitPrice(s.products.find((p) => p.id === l.productId), s.specials, () => null);
 
   const rows: Partial<Order>[] = [];
   const itemRows: { order_id: string; product_id: string; qty: number; unit_price: number }[] = [];
@@ -305,6 +313,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
     fuel_surcharge: input.method === "delivery" ? input.fuelSurcharge : 0,
     placed_at: new Date().toISOString(),
     created_by: s.user?.id || null,
+    quote_id: input.quoteId || null,
   };
 
   let masterId: string | null = null;
@@ -351,7 +360,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
       } as Partial<Order>);
       input.cart
         .filter((l) => l.to === d.letter)
-        .forEach((l) => itemRows.push({ order_id: id, product_id: l.productId, qty: l.qty, unit_price: priceFor(l.productId) }));
+        .forEach((l) => itemRows.push({ order_id: id, product_id: l.productId, qty: l.qty, unit_price: priceFor(l) }));
     });
   } else {
     const id = uuid();
@@ -372,7 +381,7 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
       ...common,
     } as Partial<Order>);
     input.cart.forEach((l) =>
-      itemRows.push({ order_id: id, product_id: l.productId, qty: l.qty, unit_price: priceFor(l.productId) })
+      itemRows.push({ order_id: id, product_id: l.productId, qty: l.qty, unit_price: priceFor(l) })
     );
   }
 
@@ -414,7 +423,146 @@ export async function createOrder(input: CreateOrderInput): Promise<Order | null
   /* A yard sale is finished the moment it is rung up — it never passes through
      a status change, so auto-push has to be offered its one chance here. */
   if (input.mode === "yardsale") newOrders.forEach((o) => void autoPushToMyob(o.id));
-  return newOrders.find((o) => o.kind !== "split") || newOrders[0] || null;
+  const created = newOrders.find((o) => o.kind !== "split") || newOrders[0] || null;
+  /* The quote this came from is done with: it says which order it became. */
+  if (input.quoteId && created) markQuoteConverted(input.quoteId, created.id);
+  return created;
+}
+
+/* ---------- quotes ---------- */
+
+/* Written up on the New order screen, saved against the customer instead of
+   being created. Prices, fees and the surcharge are locked as they stand;
+   the deliveries are kept as drafts so the quote can be put back on the
+   screen and taken as an order later. */
+export async function createQuote(input: CreateOrderInput): Promise<Quote | null> {
+  const s = S();
+  if (!input.customer) {
+    s.toast({ tone: "warning", title: "A quote needs a customer", description: "Pick the customer it is for, or add them, then save the quote." });
+    return null;
+  }
+  const { data: numData, error: numError } = await supabase.rpc("next_quote_number");
+  if (numError || typeof numData !== "string") {
+    s.toast({ tone: "danger", title: "Could not save the quote", description: numError?.message || "No quote number came back." });
+    return null;
+  }
+  const priceFor = (l: CartLine) =>
+    l.quotedPrice != null ? Number(l.quotedPrice) : unitPrice(s.products.find((p) => p.id === l.productId), s.specials, () => null);
+
+  const validDays = Math.max(1, Number(s.business?.quote_valid_days) || 14);
+  const until = new Date();
+  until.setDate(until.getDate() + validDays);
+  const id = uuid();
+  const isDelivery = input.method === "delivery";
+  const deliveries = input.drafts.map((d) => ({
+    letter: d.letter,
+    dateIso: d.dateIso,
+    window: d.window,
+    street: isDelivery ? d.street : "",
+    suburbId: isDelivery ? d.suburbId : null,
+    fee: isDelivery ? (d.feeSource === "manual" ? Number(d.fee) || 0 : resolvedSuburbFee(d.suburbId, s.suburbs, s.paySettings).total) : 0,
+    feeSource: d.feeSource,
+    truckId: isDelivery ? d.truckId : null,
+  }));
+  const itemRows = input.cart.map((l) => ({
+    id: uuid(),
+    quote_id: id,
+    product_id: l.productId,
+    qty: l.qty,
+    unit_price: priceFor(l),
+    delivery_letter: l.to,
+  }));
+  const row: Partial<Quote> = {
+    id,
+    quote_number: numData,
+    revision: 1,
+    status: "open",
+    customer_id: input.customer.id,
+    contact_id: input.contactId,
+    method: input.method,
+    deliveries,
+    settle_method: (input.settleMethod as Quote["settle_method"]) || null,
+    po_number: input.poNumber || null,
+    order_notes: input.orderNotes || null,
+    delivery_notes: input.deliveryNotes || null,
+    adjustment_type: input.adjustmentType,
+    adjustment_value: input.adjustmentValue,
+    fuel_surcharge: isDelivery ? input.fuelSurcharge : 0,
+    quoted_total: 0,
+    valid_until: until.toISOString().slice(0, 10),
+    created_by: s.user?.id || null,
+  };
+  const lines = itemRows.map((i) => ({ ...i, line_total: Math.round(i.qty * i.unit_price * 100) / 100 })) as QuoteItem[];
+  row.quoted_total = quoteBreakdown(row as Quote, lines).total;
+
+  const { data: inserted, error } = await supabase.from("quotes").insert(row as any).select("*").single();
+  if (error) {
+    s.toast({ tone: "danger", title: "Could not save the quote", description: error.message + " Nothing was lost — fix the issue and try again." });
+    return null;
+  }
+  const { data: insertedItems, error: itemsError } = await supabase.from("quote_items").insert(itemRows).select("*");
+  if (itemsError) s.toast({ tone: "danger", title: "Quote saved, lines failed", description: itemsError.message });
+
+  const quote = inserted as Quote;
+  set((st) => ({
+    quotes: [...st.quotes.filter((q) => q.id !== quote.id), quote],
+    quoteItems: { ...st.quoteItems, [quote.id]: ((insertedItems || lines) as QuoteItem[]) },
+  }));
+  logActivity("quote", quote.id, "created:" + quote.quote_number);
+  return quote;
+}
+
+function patchQuoteLocal(id: string, patch: Partial<Quote>) {
+  set((st) => ({ quotes: st.quotes.map((q) => (q.id === id ? { ...q, ...patch } : q)) }));
+}
+
+/* Sent, accepted, declined, or back to open — a note of where the
+   conversation is, nothing more. Taken-as-order is set by createOrder. */
+export function setQuoteStatus(id: string, status: Exclude<QuoteStatus, "converted">, reason?: string) {
+  const now = new Date().toISOString();
+  const patch: Partial<Quote> =
+    status === "sent"
+      ? { status, sent_at: now }
+      : status === "accepted"
+        ? { status, accepted_at: now }
+        : status === "declined"
+          ? { status, declined_at: now, declined_reason: reason || null }
+          : { status, declined_at: null, declined_reason: null };
+  patchQuoteLocal(id, patch);
+  persist(supabase.from("quotes").update(patch).eq("id", id), "the quote");
+  logActivity("quote", id, "status:" + status);
+}
+
+function markQuoteConverted(quoteId: string, orderId: string) {
+  const patch: Partial<Quote> = { status: "converted", converted_at: new Date().toISOString(), order_id: orderId };
+  patchQuoteLocal(quoteId, patch);
+  persist(supabase.from("quotes").update(patch).eq("id", quoteId), "the quote");
+  logActivity("quote", quoteId, "converted:" + orderId);
+}
+
+/* Hidden, not destroyed, like an order. */
+export function deleteQuote(id: string) {
+  const q = S().quotes.find((x) => x.id === id);
+  set((st) => ({ quotes: st.quotes.filter((x) => x.id !== id) }));
+  persist(supabase.from("quotes").update({ deleted_at: new Date().toISOString() }).eq("id", id), "the quote");
+  logActivity("quote", id, "deleted:" + (q?.quote_number || id));
+}
+
+export function printQuote(id: string) {
+  const s = S();
+  const quote = s.quotes.find((q) => q.id === id);
+  if (!quote) return;
+  printDocument(
+    quoteHtml({
+      quote,
+      items: s.quoteItems[quote.id] || [],
+      products: s.products,
+      suburbs: s.suburbs,
+      customer: s.customers.find((c) => c.id === quote.customer_id),
+      business: s.business,
+      paySettings: s.paySettings,
+    })
+  );
 }
 
 /* Paid, by hand. The status was set once when the order was taken and nothing

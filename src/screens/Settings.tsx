@@ -143,6 +143,30 @@ export default function Settings() {
             </div>
           </Card>
 
+          <Card title="Quotes" subtitle="How long a quote stands, and what prints at its foot" padding="default">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+                <Input
+                  size="sm"
+                  label="Valid for (days)"
+                  type="number"
+                  value={String(b.quote_valid_days ?? 14)}
+                  onChange={(e: any) => setB({ quote_valid_days: String(Math.max(1, parseInt(e.target.value, 10) || 14)) })}
+                />
+              </div>
+              <Textarea
+                label="Terms printed on the quote"
+                value={b.quote_terms || ""}
+                onChange={(v: any) => setB({ quote_terms: typeof v === "string" ? v : v.target.value })}
+                rows={2}
+              />
+              <div style={{ fontSize: 11, color: "var(--text-faint)", textWrap: "pretty" as any }}>
+                A quote is written up on the New order screen and saved against the customer with its prices locked. It
+                never reaches the board, reports or statements until it is taken as an order. Save with the button above.
+              </div>
+            </div>
+          </Card>
+
           <Card title="Statement payment details" subtitle="Printed at the foot of every statement" padding="default">
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>

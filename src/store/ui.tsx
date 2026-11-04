@@ -4,7 +4,7 @@
 
 import React, { useEffect, createContext, useContext, useMemo, useState } from "react";
 import { blankDraft, useApp, type CartLine, type DeliveryDraft } from "./store";
-import type { OrderStatus } from "../lib/types";
+import type { OrderStatus, Quote, QuoteItem } from "../lib/types";
 
 /* Raised after an order is created so the tax invoice can be printed with its
    real number on it. Lives here, not in the new-order screen, because a
@@ -29,6 +29,7 @@ export interface SavedDraft {
   drafts: DeliveryDraft[];
   yardCustomer: boolean;
   savedAt: string;
+  fromQuoteId?: string | null;
 }
 
 interface UiState {
@@ -57,6 +58,12 @@ interface UiState {
   poNumber: string;
   orderNotesDraft: string;
   deliveryNotesDraft: string;
+  /* The quote the order in progress was taken from, if any. Stamped on the
+     order when it is created, and the quote is marked as taken. */
+  fromQuoteId: string | null;
+  /* The quote's adjustment, handed to the New order screen once (its
+     adjustment box is screen state) and cleared when picked up. */
+  pendingAdjust: string | null;
   savedDraft: SavedDraft | null;
 
   // pickers & drawers
@@ -74,6 +81,10 @@ interface UiState {
   set: (patch: Partial<UiState>) => void;
   navigateTo: (id: string) => void;
   startOrder: (customerId?: string | null) => void;
+  /* Puts a saved quote back on the New order screen — customer, lines at
+     the quoted prices, deliveries, settlement, notes — ready to be created
+     through the same checks as any order. */
+  useQuoteForOrder: (quote: Quote, items: QuoteItem[]) => void;
   startYardSale: () => void;
   discardOrder: () => void;
   saveOrderForLater: () => void;
@@ -125,6 +136,8 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     poNumber: "",
     orderNotesDraft: "",
     deliveryNotesDraft: "",
+    fromQuoteId: null as string | null,
+    pendingAdjust: null as string | null,
     savedDraft: readSavedDraft(),
     printPrompt: null as PrintPrompt | null,
     picker: null as PickerState | null,
@@ -176,6 +189,44 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           orderContact: null,
           settleMethod: customerId ? s.settleMethod : null,
           settleMethodAuto: customerId ? s.settleMethodAuto : false,
+          fromQuoteId: null,
+        })),
+      useQuoteForOrder: (quote, items) =>
+        setState((s) => ({
+          ...s,
+          nav: "neworder",
+          pendingNav: null,
+          drawerOpen: false,
+          custId: null,
+          orderMode: "standard",
+          /* Straight to the delivery and payment step: the lines are what was
+             quoted, and Back to items is one click if they have changed. */
+          orderStep: 2,
+          cart: items.map((i) => ({
+            productId: i.product_id || "",
+            qty: Number(i.qty),
+            to: i.delivery_letter || "A",
+            typed: null,
+            quotedPrice: Number(i.unit_price),
+          })).filter((l) => l.productId),
+          drafts: (quote.deliveries || []).length
+            ? (quote.deliveries || []).map((d) => ({ ...blankDraft(d.letter), ...d, truckId: d.truckId ?? null }))
+            : [blankDraft("A")],
+          activeDraft: quote.deliveries?.[0]?.letter || "A",
+          customerId: quote.customer_id,
+          yardCustomer: false,
+          yardWalkInName: "",
+          orderContact: quote.contact_id,
+          fulfilMethod: quote.method,
+          settleMethod: quote.settle_method,
+          settleMethodAuto: false,
+          poNumber: quote.po_number || "",
+          orderNotesDraft: quote.order_notes || "",
+          deliveryNotesDraft: quote.delivery_notes || "",
+          adjustType: quote.adjustment_type === "percent" ? "Percent" : "Amount",
+          adjustDirection: Number(quote.adjustment_value || 0) > 0 ? "surcharge" : "discount",
+          pendingAdjust: quote.adjustment_type && Number(quote.adjustment_value) ? String(Math.abs(Number(quote.adjustment_value))) : "",
+          fromQuoteId: quote.id,
         })),
       /* Switching to the counter keeps whatever is already on the order.
          Half-written orders do turn into counter sales — the customer rings,
@@ -206,6 +257,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           poNumber: "",
           orderNotesDraft: "",
           deliveryNotesDraft: "",
+          fromQuoteId: null,
         })),
       saveOrderForLater: () =>
         setState((s) => {
@@ -216,6 +268,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
             orderStep: s.orderStep,
             drafts: s.drafts,
             yardCustomer: s.yardCustomer,
+            fromQuoteId: s.fromQuoteId,
             savedAt: new Date().toLocaleString("en-AU", {
               hour: "numeric",
               minute: "2-digit",
@@ -237,6 +290,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
             activeDraft: "A",
             orderStep: 1,
             yardCustomer: false,
+            fromQuoteId: null,
           };
         }),
       resumeSavedOrder: () =>
@@ -257,6 +311,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
             drafts: d.drafts,
             activeDraft: d.drafts[0]?.letter || "A",
             yardCustomer: d.yardCustomer,
+            fromQuoteId: d.fromQuoteId || null,
           };
         }),
       discardSavedOrder: () => {
