@@ -73,7 +73,8 @@ await p.evaluate(() => {
 });
 await press(p.getByRole('button', { name: 'Print quote' }).first(), 700, 900);
 await p.evaluate(() => {
-  const html = window.__sheetHtml || '<p>no sheet</p>';
+  /* Screen margins in place of the @page ones, and no letterhead mark. */
+  const html = (window.__sheetHtml || '<p>no sheet</p>').replace('</head>', '<style>body{padding:38px 46px;box-sizing:border-box}header img{display:none}</style></head>');
   const wrap = document.createElement('div');
   wrap.id = 'demo-sheet';
   wrap.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(9,11,21,.72);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .4s';

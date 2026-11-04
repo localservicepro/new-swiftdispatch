@@ -33,8 +33,8 @@ export async function setup(p, { signedIn = false } = {}) {
     }
     if (req.method() !== 'GET') return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
     /* The settings singletons are read with maybeSingle, which wants one object
-       back. A blank business name lets the shell fall back to its generic line. */
-    if (table === 'business_settings') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: true, name: '', email: null, phone: null, website: null, address: null, abn: null, hours: null, doc_format: 'ORD-######', master_prefix: 'MO — ', print_delivery_notes: true, bank_name: null, bank_account_name: null, bank_bsb: null, bank_account_no: null, payment_reference_note: null, card_surcharge_note: null, quote_valid_days: 14, quote_terms: 'Prices are valid until the date shown. Delivery is subject to site access and availability.' }) });
+       back. The name is a stand-in, since recordings go on a public channel. */
+    if (table === 'business_settings') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: true, name: 'Demo Landscape Supplies', email: null, phone: null, website: null, address: null, abn: null, hours: null, doc_format: 'ORD-######', master_prefix: 'MO — ', print_delivery_notes: true, bank_name: null, bank_account_name: null, bank_bsb: null, bank_account_no: null, payment_reference_note: null, card_surcharge_note: null, quote_valid_days: 14, quote_terms: 'Prices are valid until the date shown. Delivery is subject to site access and availability.' }) });
     const from = Number(url.searchParams.get('offset') || 0);
     const limit = Math.min(Number(url.searchParams.get('limit') || CAP), CAP);
     const total = N[table] ?? 0;
