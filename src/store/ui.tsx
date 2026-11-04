@@ -2,9 +2,18 @@
    modals. Kept separate from the data store so screen state never masquerades as
    database state. */
 
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { useEffect, createContext, useContext, useMemo, useState } from "react";
 import { blankDraft, useApp, type CartLine, type DeliveryDraft } from "./store";
-import type { OrderStatus } from "../lib/types";
+import type { OrderStatus, Quote, QuoteItem } from "../lib/types";
+
+/* Raised after an order is created so the tax invoice can be printed with its
+   real number on it. Lives here, not in the new-order screen, because a
+   standard order navigates to the board the moment it is created. */
+export interface PrintPrompt {
+  orderId: string;
+  orderNumber: string;
+  splits: number;
+}
 
 export interface PickerState {
   kind: "date" | "window";
@@ -20,6 +29,7 @@ export interface SavedDraft {
   drafts: DeliveryDraft[];
   yardCustomer: boolean;
   savedAt: string;
+  fromQuoteId?: string | null;
 }
 
 interface UiState {
@@ -38,15 +48,26 @@ interface UiState {
   yardWalkInName: string;
   orderContact: string | null;
   fulfilMethod: "delivery" | "pickup";
-  qtyStep: number;
-  adjustType: "Percent" | "Dollars";
+  adjustType: "Percent" | "Amount";
+  adjustDirection: "discount" | "surcharge";
   settleMethod: string | null;
+  /* Whether the settlement method above was filled in by the app rather than
+     chosen by hand. An automatic answer is the app's to withdraw when the
+     customer changes; one somebody typed is theirs and is left alone. */
+  settleMethodAuto: boolean;
   poNumber: string;
   orderNotesDraft: string;
   deliveryNotesDraft: string;
+  /* The quote the order in progress was taken from, if any. Stamped on the
+     order when it is created, and the quote is marked as taken. */
+  fromQuoteId: string | null;
+  /* The quote's adjustment, handed to the New order screen once (its
+     adjustment box is screen state) and cleared when picked up. */
+  pendingAdjust: string | null;
   savedDraft: SavedDraft | null;
 
   // pickers & drawers
+  printPrompt: PrintPrompt | null;
   picker: PickerState | null;
   drawerOpen: boolean;
   selectedOrderId: string | null; // null while drawer open = master group view
@@ -60,6 +81,10 @@ interface UiState {
   set: (patch: Partial<UiState>) => void;
   navigateTo: (id: string) => void;
   startOrder: (customerId?: string | null) => void;
+  /* Puts a saved quote back on the New order screen — customer, lines at
+     the quoted prices, deliveries, settlement, notes — ready to be created
+     through the same checks as any order. */
+  useQuoteForOrder: (quote: Quote, items: QuoteItem[]) => void;
   startYardSale: () => void;
   discardOrder: () => void;
   saveOrderForLater: () => void;
@@ -68,11 +93,27 @@ interface UiState {
   openOrderDrawer: (orderId: string | null, masterId: string | null, tab?: string) => void;
 }
 
+/* The screen survives a reload. The yard refreshes often — until live updates
+   landed it was the only way to see a colleague's change — and every refresh
+   dropped them on the dashboard. The new-order screen is the exception: its
+   cart is not in this store, so coming back to an empty order form helps nobody;
+   Orders is where a saved draft is offered from. */
+const SCREENS = ["dashboard", "board", "neworder", "orders", "customers", "payments", "products", "fleet", "team", "suburbs", "reports", "settings", "docs"];
+const readNav = (): string => {
+  try {
+    const v = localStorage.getItem("sdp_nav") || "";
+    if (v === "neworder") return "orders";
+    return SCREENS.includes(v) ? v : "dashboard";
+  } catch {
+    return "dashboard";
+  }
+};
+
 const UiCtx = createContext<UiState | null>(null);
 
 export function UiProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState(() => ({
-    nav: "dashboard",
+    nav: readNav(),
     collapsed: false,
     pendingNav: null as string | null,
     orderMode: "standard" as "standard" | "yardsale",
@@ -85,13 +126,20 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     yardWalkInName: "",
     orderContact: null as string | null,
     fulfilMethod: "delivery" as "delivery" | "pickup",
-    qtyStep: 1,
-    adjustType: "Percent" as "Percent" | "Dollars",
+    /* An amount, not a percentage. The yard prices a discount as "take five
+       dollars off", not "take five percent off", and the field was asking them
+       to convert every time. */
+    adjustType: "Amount" as "Percent" | "Amount",
+    adjustDirection: "discount" as "discount" | "surcharge",
     settleMethod: null as string | null,
+    settleMethodAuto: false,
     poNumber: "",
     orderNotesDraft: "",
     deliveryNotesDraft: "",
+    fromQuoteId: null as string | null,
+    pendingAdjust: null as string | null,
     savedDraft: readSavedDraft(),
+    printPrompt: null as PrintPrompt | null,
     picker: null as PickerState | null,
     drawerOpen: false,
     selectedOrderId: null as string | null,
@@ -102,6 +150,14 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
     custTab: "overview",
     lastOpenedOrder: null as string | null,
   }));
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sdp_nav", state.nav);
+    } catch {
+      /* private window — the screen just is not remembered */
+    }
+  }, [state.nav]);
 
   const api = useMemo<UiState>(() => {
     const set = (patch: Partial<UiState>) => setState((s) => ({ ...s, ...patch }) as any);
@@ -116,6 +172,11 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           return { ...s, pendingNav: id };
         });
       },
+      /* Starting an order starts it empty. It used to keep whoever the last
+         order was for, which reads as a convenience and is not one: the same
+         customer rarely orders twice in a row, the name sits in a corner of the
+         screen where nobody rereads it, and the result was goods billed to the
+         wrong account. Customers › New order still passes one in deliberately. */
       startOrder: (customerId) =>
         setState((s) => ({
           ...s,
@@ -124,19 +185,63 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           orderMode: "standard",
           drawerOpen: false,
           custId: null,
-          customerId: customerId !== undefined ? customerId : s.customerId,
+          customerId: customerId ?? null,
+          orderContact: null,
+          settleMethod: customerId ? s.settleMethod : null,
+          settleMethodAuto: customerId ? s.settleMethodAuto : false,
+          fromQuoteId: null,
         })),
+      useQuoteForOrder: (quote, items) =>
+        setState((s) => ({
+          ...s,
+          nav: "neworder",
+          pendingNav: null,
+          drawerOpen: false,
+          custId: null,
+          orderMode: "standard",
+          /* Straight to the delivery and payment step: the lines are what was
+             quoted, and Back to items is one click if they have changed. */
+          orderStep: 2,
+          cart: items.map((i) => ({
+            productId: i.product_id || "",
+            qty: Number(i.qty),
+            to: i.delivery_letter || "A",
+            typed: null,
+            quotedPrice: Number(i.unit_price),
+          })).filter((l) => l.productId),
+          drafts: (quote.deliveries || []).length
+            ? (quote.deliveries || []).map((d) => ({ ...blankDraft(d.letter), ...d, truckId: d.truckId ?? null }))
+            : [blankDraft("A")],
+          activeDraft: quote.deliveries?.[0]?.letter || "A",
+          customerId: quote.customer_id,
+          yardCustomer: false,
+          yardWalkInName: "",
+          orderContact: quote.contact_id,
+          fulfilMethod: quote.method,
+          settleMethod: quote.settle_method,
+          settleMethodAuto: false,
+          poNumber: quote.po_number || "",
+          orderNotesDraft: quote.order_notes || "",
+          deliveryNotesDraft: quote.delivery_notes || "",
+          adjustType: quote.adjustment_type === "percent" ? "Percent" : "Amount",
+          adjustDirection: Number(quote.adjustment_value || 0) > 0 ? "surcharge" : "discount",
+          pendingAdjust: quote.adjustment_type && Number(quote.adjustment_value) ? String(Math.abs(Number(quote.adjustment_value))) : "",
+          fromQuoteId: quote.id,
+        })),
+      /* Switching to the counter keeps whatever is already on the order.
+         Half-written orders do turn into counter sales — the customer rings,
+         then turns up — and this used to empty the cart without asking, while
+         the New order button beside it kept everything. A customer already
+         chosen comes across as the account the sale goes on. */
       startYardSale: () =>
         setState((s) => ({
           ...s,
           nav: "neworder",
           orderStep: 1,
           orderMode: "yardsale",
-          cart: [],
           drawerOpen: false,
-          yardCustomer: false,
-          yardWalkInName: "",
-          orderContact: null,
+          yardCustomer: !!s.customerId,
+          yardWalkInName: s.yardWalkInName,
         })),
       discardOrder: () =>
         setState((s) => ({
@@ -152,6 +257,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
           poNumber: "",
           orderNotesDraft: "",
           deliveryNotesDraft: "",
+          fromQuoteId: null,
         })),
       saveOrderForLater: () =>
         setState((s) => {
@@ -162,6 +268,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
             orderStep: s.orderStep,
             drafts: s.drafts,
             yardCustomer: s.yardCustomer,
+            fromQuoteId: s.fromQuoteId,
             savedAt: new Date().toLocaleString("en-AU", {
               hour: "numeric",
               minute: "2-digit",
@@ -183,6 +290,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
             activeDraft: "A",
             orderStep: 1,
             yardCustomer: false,
+            fromQuoteId: null,
           };
         }),
       resumeSavedOrder: () =>
@@ -203,6 +311,7 @@ export function UiProvider({ children }: { children: React.ReactNode }) {
             drafts: d.drafts,
             activeDraft: d.drafts[0]?.letter || "A",
             yardCustomer: d.yardCustomer,
+            fromQuoteId: d.fromQuoteId || null,
           };
         }),
       discardSavedOrder: () => {

@@ -4,40 +4,161 @@ import { useUi } from "../store/ui";
 import {
   AUD,
   AUD0,
+  CLASS_STYLE,
+  customerClass,
   deliverySortKey,
+  rangeTest,
+  matchesAllTerms,
   feeOf,
   goodsOf,
   LANES,
   orderTotal,
   placedText,
+  qtyText,
   shortDate,
   suburbRate,
 } from "../lib/domain";
-import type { Order, OrderStatus } from "../lib/types";
-import { assignCrew, moveOrder } from "../data/api";
-import { Card, DataTable, Icon, Input, OrderCard, Select, Tabs, Button } from "../design-system/components.js";
+import { PAYMENT_METHOD_LABEL, type Order, type OrderStatus } from "../lib/types";
+import { assignCrew, moveOrder, patchOrder } from "../data/api";
+import { Card, DataTable, Icon, Input, Select, Tabs, Button } from "../design-system/components.js";
+import BoardCard from "./BoardCard";
+import DateRangeFields from "./DateRange";
+import { GoodsCell, NotesCell } from "./OrderLines";
+import { itemsText } from "../lib/domain";
+import { useViewport } from "../lib/viewport";
+
+/* Cards drawn per lane before "Show more". The stage counts in the headers are
+   always the real ones — this only bounds how much of a lane becomes DOM. */
+const LANE_PAGE = 100;
+
+const PERIODS = ["Today", "This week", "This month", "All time", "Custom range"] as const;
+type Period = (typeof PERIODS)[number];
+const SORTS = ["Delivery time — oldest first", "Placed — newest first", "Value — highest first"] as const;
+type SortBy = (typeof SORTS)[number];
+
+const inPeriodFactory = (period: Period, range: { from: string; to: string }) => {
+  if (period === "All time") return () => true;
+  if (period === "Custom range") {
+    const test = rangeTest(range.from, range.to);
+    return (o: Order) =>
+      test(o.delivery_date ? new Date(o.delivery_date + "T00:00:00").getTime() : new Date(o.placed_at).getTime());
+  }
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === "This week") start.setDate(start.getDate() - start.getDay());
+  if (period === "This month") start.setDate(1);
+  const end = new Date(start);
+  if (period === "Today") end.setDate(end.getDate() + 1);
+  if (period === "This week") end.setDate(end.getDate() + 7);
+  if (period === "This month") end.setMonth(end.getMonth() + 1);
+  const from = start.getTime();
+  const to = end.getTime();
+  return (o: Order) => {
+    const t = o.delivery_date ? new Date(o.delivery_date + "T00:00:00").getTime() : new Date(o.placed_at).getTime();
+    return t >= from && t < to;
+  };
+};
 
 export default function Board() {
   const ui = useUi();
-  const { orders, orderItems, suburbs, customers, trucks, team } = useApp();
+  const { tight } = useViewport();
+  const { orders, orderItems, suburbs, customers, trucks, team, products, paySettings } = useApp();
   const [view, setView] = useState<"kanban" | "list">("kanban");
   const [query, setQuery] = useState("");
   const [dragging, setDragging] = useState<{ id: string; from: OrderStatus } | null>(null);
+  const [dropBefore, setDropBefore] = useState<string | null>(null);
+  /* Column widths the yard has set by dragging a column edge, by lane id,
+     kept per browser. A column with no width set shares the screen equally
+     with the others (row 172); one with a width keeps it (rows 132, 151).
+     Double-click the edge to let it share again. */
+  const [laneWidths, setLaneWidths] = useState<Record<string, number>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("sdp_board_lane_widths") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const setLaneWidth = (id: string, w: number | null) =>
+    setLaneWidths((prev) => {
+      const next = { ...prev };
+      if (w === null) delete next[id];
+      else next[id] = Math.round(w);
+      try {
+        localStorage.setItem("sdp_board_lane_widths", JSON.stringify(next));
+      } catch {
+        /* private window — the width just does not survive the tab */
+      }
+      return next;
+    });
+  const startLaneResize = (id: string, e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const lane = (e.currentTarget.parentElement as HTMLElement) || null;
+    if (!lane) return;
+    const startX = e.clientX;
+    const startW = lane.getBoundingClientRect().width;
+    const min = tight ? 240 : 280;
+    const onMove = (ev: PointerEvent) => setLaneWidth(id, Math.max(min, startW + (ev.clientX - startX)));
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+  /* How many cards each lane is currently drawing. A busy Monday can put a few
+     hundred orders in one stage, and every card is a fair amount of DOM. */
+  const [shown, setShown] = useState<Partial<Record<OrderStatus, number>>>({});
   const [assignTruck, setAssignTruck] = useState<string>("");
   const [assignDriver, setAssignDriver] = useState<string>("");
+  /* These two controls had been on the screen since the first build with
+     handlers that did nothing. Wired now: the period narrows by delivery date
+     (an order with no date yet goes under the day it was placed), the sort
+     reorders every lane. */
+  const [period, setPeriod] = useState<Period>("All time");
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [sortBy, setSortBy] = useState<SortBy>(SORTS[0]);
 
   const live = useMemo(
-    () => orders.filter((o) => !o.deleted_at && o.kind !== "master" && o.status !== "cancelled" && o.status !== "ready_for_pickup"),
+    () =>
+      orders.filter(
+        (o) =>
+          !o.deleted_at &&
+          o.kind !== "master" &&
+          /* A yard sale is rung up and walked out; it was never going on a
+             truck. Filtering on status alone let the few that had been moved
+             to another stage by hand leak onto the board. */
+          o.kind !== "yard_sale" &&
+          o.status !== "cancelled" &&
+          o.status !== "ready_for_pickup"
+      ),
     [orders]
   );
 
   const masters = useMemo(() => new Map(orders.filter((o) => o.kind === "master").map((o) => [o.id, o])), [orders]);
-  const customerOf = (o: Order) => customers.find((c) => c.id === o.customer_id);
+  const custById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
+  const customerOf = (o: Order) => (o.customer_id ? custById.get(o.customer_id) : undefined);
   const truckLabel = (id: string | null) => {
     const t = trucks.find((x) => x.id === id);
     return t ? `${t.rego}` : undefined;
   };
   const driverLabel = (id: string | null) => team.find((x) => x.id === id)?.name;
+
+  /* Who can be put on a run. Not only the drivers: several people at the yard
+     work the office as an admin and take a truck out when it is busy, and the
+     list that left them off meant those jobs showed as unassigned all day. A
+     driver is still listed as a driver — the role is what they mostly do, not a
+     rule about who may hold a delivery. */
+  const crewOptions = useMemo(
+    () =>
+      team
+        .filter((t) => t.active && t.role !== "super_admin")
+        .concat(team.filter((t) => t.active && t.role === "super_admin"))
+        .map((t) => ({ value: t.id, label: t.role === "driver" ? t.name : `${t.name} — ${t.role === "admin" ? "admin" : "super admin"}` })),
+    [team]
+  );
+
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const classOf = (o: Order) => customerClass(customerOf(o));
 
   const q = query.trim().toLowerCase();
   const matches = (o: Order) => {
@@ -48,28 +169,81 @@ export default function Board() {
       c?.name,
       o.walk_in_name,
       o.po_number,
-      ...(c?.contacts.map((ct) => `${ct.name} ${ct.phone || ""}`) || []),
+      /* Dispatch knows a job by where it is going at least as often as by who
+         ordered it, so the street and suburb are searchable too. */
+      o.street,
+      suburbs.find((s) => s.id === o.suburb_id)?.name,
+      ...(c?.contacts.map((ct) => `${ct.name} ${ct.phone || ""} ${ct.email || ""}`) || []),
+      AUD(totalOf(o)),
+      totalOf(o).toFixed(2),
     ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
-    return hay.includes(q);
+    return matchesAllTerms(hay, q);
   };
 
-  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs);
+  const totalOf = (o: Order) => orderTotal(o, orderItems[o.id] || [], suburbs, paySettings);
 
   let boardCount = 0;
   let boardValue = 0;
 
+  const inPeriod = useMemo(() => inPeriodFactory(period, range), [period, range]);
+  /* A card someone has dragged into place keeps that place. Ranked cards lead
+     the column in rank order; the rest follow by delivery time as before. The
+     other two sorts are explicit requests and ignore the hand ordering. */
+  const rankOf = (o: Order) => (o.board_rank === null || o.board_rank === undefined ? Infinity : Number(o.board_rank));
+  const compare = (a: Order, b: Order) => {
+    if (sortBy === "Placed — newest first") return Date.parse(b.placed_at) - Date.parse(a.placed_at);
+    if (sortBy === "Value — highest first") return totalOf(b) - totalOf(a);
+    const ra = rankOf(a);
+    const rb = rankOf(b);
+    if (ra !== rb) return ra < rb ? -1 : 1;
+    return deliverySortKey(a) - deliverySortKey(b);
+  };
+  const manualOrder = sortBy !== "Placed — newest first" && sortBy !== "Value — highest first";
+
+  /* Put the dragged card just before `before` in its lane (or at the end when
+     before is null). If every other card in the lane already carries a rank
+     the dragged one takes the midpoint and a single row is written; the first
+     move in a lane ranks the whole column as it stands, so what was on screen
+     stays where it was and only the moved card changes place. */
+  const placeInLane = (laneId: OrderStatus, draggedId: string, before: string | null) => {
+    const lane = lanes.find((l) => l.id === laneId);
+    if (!lane) return;
+    const dragged = orders.find((o) => o.id === draggedId);
+    if (!dragged) return;
+    const rest = lane.cards.filter((c) => c.id !== draggedId);
+    const at = before ? rest.findIndex((c) => c.id === before) : rest.length;
+    if (at < 0) return;
+    const allRanked = rest.every((c) => rankOf(c) !== Infinity);
+    if (allRanked) {
+      const prev = at > 0 ? rankOf(rest[at - 1]) : null;
+      const next = at < rest.length ? rankOf(rest[at]) : null;
+      const rank = prev === null && next === null ? 1000 : prev === null ? next! - 1000 : next === null ? prev + 1000 : (prev + next) / 2;
+      patchOrder(draggedId, { board_rank: rank });
+      return;
+    }
+    const list = [...rest.slice(0, at), dragged, ...rest.slice(at)];
+    list.forEach((c, i) => {
+      const rank = (i + 1) * 1000;
+      if (rankOf(c) !== rank) patchOrder(c.id, { board_rank: rank });
+    });
+  };
+
   const lanes = LANES.map((lane) => {
-    const cards = live
-      .filter((o) => o.status === lane.id && matches(o))
-      .sort((a, b) => deliverySortKey(a) - deliverySortKey(b));
-    const value = cards.reduce((s, c) => s + totalOf(c), 0);
-    boardCount += cards.length;
+    const all = live
+      .filter((o) => lane.statuses.includes(o.status) && inPeriod(o) && matches(o))
+      .sort(compare);
+    const value = all.reduce((s, c) => s + totalOf(c), 0);
+    boardCount += all.length;
     boardValue += value;
-    const unassigned = lane.id === "loading" ? cards.filter((c) => !(c.truck_id && c.driver_id)).length : 0;
-    return { ...lane, cards, value, unassigned };
+    const unassigned = lane.id === "loading" ? all.filter((c) => !(c.truck_id && c.driver_id)).length : 0;
+    /* The lane header still counts the whole stage — what is capped is how much
+       of it gets built into cards. A column is worked from the top, so the
+       oldest delivery window is what wants to be on screen. */
+    const cards = all.slice(0, shown[lane.id] || LANE_PAGE);
+    return { ...lane, cards, total: all.length, value, unassigned };
   });
 
   const assignTarget = ui.assignFor ? orders.find((o) => o.id === ui.assignFor) : null;
@@ -90,15 +264,17 @@ export default function Board() {
       isSplit: o.kind === "split",
       customerName: c?.name || o.walk_in_name || "Walk-in",
       contactName: undefined,
-      customerType: c ? (c.billing === "account" ? "account" : c.tier === "Trade" ? "trade" : "residential") : "residential",
       status: lane,
       paymentStatus: o.payment_status,
       method: o.method,
       address: addressOf(o),
       window: `${shortDate(o.delivery_date)} · ${o.delivery_window || ""}`,
-      placedAt: placedText(o.placed_at),
       total: AUD(totalOf(o)),
-      itemCount: items.length,
+      /* One line per product, quantity first — what the loader reads. */
+      goods: items.map((i) => {
+        const prod = productById.get(i.product_id || "");
+        return `${qtyText(Number(i.qty), prod?.unit || "each")} ${prod?.name || i.description || "Item"}${i.backordered ? " (backorder)" : ""}`;
+      }),
       truck: truckLabel(o.truck_id),
       driver: driverLabel(o.driver_id),
       notes: o.delivery_notes || undefined,
@@ -117,23 +293,53 @@ export default function Board() {
   };
 
   const boardCols = [
-    { key: "stage", header: "Stage", width: 150 },
-    { key: "number", header: "Order", mono: true, width: 150 },
-    { key: "customer", header: "Customer" },
-    { key: "window", header: "Window", muted: true, width: 180 },
-    { key: "truck", header: "Truck", muted: true, width: 150 },
-    { key: "total", header: "Total", numeric: true, align: "right", width: 110 },
+    { key: "stage", header: "Stage", width: tight ? 110 : 130 },
+    { key: "number", header: "Order", mono: true, width: tight ? 125 : 140 },
+    { key: "customer", header: "Customer", width: tight ? 135 : 180 },
+    { key: "goods", header: "Goods", width: tight ? 200 : undefined },
+    { key: "notes", header: "Notes", width: tight ? 150 : 200 },
+    { key: "window", header: "Window", muted: true, width: tight ? 125 : 150 },
+    ...(tight ? [] : [{ key: "truck", header: "Truck", muted: true, width: 120 }]),
+    ...(tight ? [] : [{ key: "settles", header: "Settles", muted: true, width: 105 }]),
+    { key: "total", header: "Total", numeric: true, align: "right", width: 105 },
   ];
   const boardRows = lanes.flatMap((lane) =>
-    lane.cards.map((c) => ({
-      _order: c,
-      stage: lane.title,
-      number: c.order_number,
-      customer: customerOf(c)?.name || c.walk_in_name || "Walk-in",
-      window: `${shortDate(c.delivery_date)} · ${c.delivery_window || ""}`,
-      truck: truckLabel(c.truck_id) || "Unassigned",
-      total: AUD(totalOf(c)),
-    }))
+    lane.cards.map((c) => {
+      const items = orderItems[c.id] || [];
+      const cls = classOf(c);
+      return {
+        _order: c,
+        stage: lane.title,
+        number: c.order_number,
+        customer: (
+          <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            <span style={{ width: 3, alignSelf: "stretch", minHeight: 14, borderRadius: 2, flexShrink: 0, background: CLASS_STYLE[cls].colour }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {customerOf(c)?.name || c.walk_in_name || "Walk-in"}
+            </span>
+          </span>
+        ),
+        goods: <GoodsCell text={itemsText(items, productById)} count={items.length} />,
+        notes: <NotesCell delivery={c.delivery_notes} order={c.order_notes} />,
+        window: `${shortDate(c.delivery_date)} · ${c.delivery_window || ""}`,
+        truck: truckLabel(c.truck_id) || "Unassigned",
+        settles: c.payment_method ? PAYMENT_METHOD_LABEL[c.payment_method] || c.payment_method : "—",
+        total: AUD(totalOf(c)),
+      };
+    })
+  );
+
+  /* Dispatch works accounts first, then trade — a card's colour is who it is
+     for, which is the thing the column cannot tell you. */
+  const legend = (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      {(Object.keys(CLASS_STYLE) as (keyof typeof CLASS_STYLE)[]).map((k) => (
+        <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--text-faint)" }}>
+          <span style={{ width: 9, height: 3, borderRadius: 2, background: CLASS_STYLE[k].colour }} />
+          {CLASS_STYLE[k].label}
+        </span>
+      ))}
+    </div>
   );
 
   return (
@@ -153,19 +359,27 @@ export default function Board() {
           <Input
             size="sm"
             icon="search"
-            placeholder="Order no, customer, PO, phone"
+            placeholder="Order no, customer, address, PO, phone"
             value={query}
             onChange={(e: any) => setQuery(e.target.value)}
           />
         </div>
-        <Select size="sm" options={["Today", "This week", "This month", "All time"]} value="All time" onChange={() => {}} style={{ width: 130, flexShrink: 0 }} />
         <Select
           size="sm"
-          options={["Delivery time — oldest first", "Placed — newest first", "Value — highest first"]}
-          value="Delivery time — oldest first"
-          onChange={() => {}}
+          options={PERIODS as unknown as string[]}
+          value={period}
+          onChange={(e: any) => setPeriod(e.target.value as Period)}
+          style={{ width: 130, flexShrink: 0 }}
+        />
+        {period === "Custom range" && <DateRangeFields from={range.from} to={range.to} onChange={setRange} />}
+        <Select
+          size="sm"
+          options={SORTS as unknown as string[]}
+          value={sortBy}
+          onChange={(e: any) => setSortBy(e.target.value as SortBy)}
           style={{ width: 240, flexShrink: 0 }}
         />
+        {legend}
         <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "var(--text-muted)", marginLeft: "auto" }}>
           <span>
             <span className="tabular" style={{ color: "var(--text-primary)", fontWeight: 600 }}>
@@ -193,6 +407,9 @@ export default function Board() {
                   e.preventDefault();
                   if (!dragging) return;
                   if (dragging.from !== lane.id) moveOrder(dragging.id, lane.id);
+                  /* Dropped on the column itself rather than on a card: it
+                     goes to the bottom of the hand-ordered run. */
+                  else if (manualOrder) placeInLane(lane.id, dragging.id, null);
                   const moved = orders.find((o) => o.id === dragging.id);
                   setDragging(null);
                   if (lane.id === "loading" && moved && !(moved.truck_id && moved.driver_id)) {
@@ -201,8 +418,26 @@ export default function Board() {
                     setAssignDriver(moved.driver_id || "");
                   }
                 }}
-                style={{ flex: "1 1 320px", minWidth: 320, maxWidth: 420, display: "flex", flexDirection: "column", minHeight: 0 }}
+                style={{
+                  /* No maximum: the columns share whatever the window gives
+                     them, so a wide or zoomed-out screen is filled rather
+                     than leaving a gutter on the right. The minimum keeps a
+                     card readable; past it the board scrolls sideways. */
+                  flex: laneWidths[lane.id] ? `0 0 ${laneWidths[lane.id]}px` : tight ? "1 1 265px" : "1 1 320px",
+                  minWidth: laneWidths[lane.id] ? undefined : tight ? 240 : 280,
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
+                  position: "relative",
+                }}
               >
+                <div
+                  onPointerDown={(e) => startLaneResize(lane.id, e)}
+                  onDoubleClick={() => setLaneWidth(lane.id, null)}
+                  title={laneWidths[lane.id] ? "Drag to resize · double-click to share the screen again" : "Drag to resize this column"}
+                  className="board-lane-handle"
+                  style={{ position: "absolute", top: 0, bottom: 8, right: -7, width: 12, cursor: "col-resize", zIndex: 2 }}
+                />
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "0 4px 8px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: lane.accent }} />
@@ -277,22 +512,65 @@ export default function Board() {
                       ? siblings.reduce((s, x) => s + totalOf(x), 0) +
                         goodsOf(orderItems[master.id] || [])
                       : 0;
+                    const cls = classOf(o);
+                    const rail = CLASS_STYLE[cls].colour;
+                    const unconfirmed = o.status === "requested";
                     return (
                       <div
                         key={o.id}
                         draggable
                         onDragStart={() => setDragging({ id: o.id, from: lane.id })}
                         onDragEnd={() => setDragging(null)}
+                        onDragOver={(e) => {
+                          if (!dragging || dragging.id === o.id) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDropBefore(o.id);
+                        }}
+                        onDragLeave={() => setDropBefore((d) => (d === o.id ? null : d))}
+                        onDrop={(e) => {
+                          if (!dragging || dragging.id === o.id) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (dragging.from !== lane.id) moveOrder(dragging.id, lane.id);
+                          if (manualOrder) placeInLane(lane.id, dragging.id, o.id);
+                          setDragging(null);
+                          setDropBefore(null);
+                        }}
+                        title={`${CLASS_STYLE[cls].label} customer`}
                         style={{
                           cursor: "grab",
                           opacity: dragging && dragging.id === o.id ? 0.35 : 1,
+                          /* Where it will land. */
+                          boxShadow: dropBefore === o.id && dragging ? "0 -2px 0 0 var(--brand-primary)" : undefined,
                           borderRadius: 10,
-                          padding: isSplit ? "8px 0 0" : 0,
+                          /* The colour is who the order is for. The lane already
+                             says what stage it is at, so the one thing a column
+                             cannot tell you is the one the card is coloured by:
+                             accounts go out first, then trade. */
+                          borderLeft: `3px solid ${rail}`,
+                          paddingLeft: 5,
+                          padding: isSplit ? "8px 0 0 5px" : "0 0 0 5px",
                           background: isSplit ? "var(--om-split-bg)" : "transparent",
                           borderTop: `1px solid ${isSplit ? "var(--om-split-border)" : "transparent"}`,
                           borderBottom: `1px solid ${isSplit ? "var(--om-split-border)" : "transparent"}`,
                         }}
                       >
+                        {unconfirmed && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 5,
+                              padding: "0 10px 6px",
+                              fontSize: 11,
+                              color: "var(--attention)",
+                            }}
+                          >
+                            <Icon name="circle-alert" size={11} />
+                            Raised by the customer — not confirmed yet
+                          </div>
+                        )}
                         {isSplit && master && (
                           <div
                             onClick={(e) => {
@@ -313,13 +591,32 @@ export default function Board() {
                             </span>
                           </div>
                         )}
-                        <OrderCard {...p} />
+                        <BoardCard
+                          {...p}
+                          classLabel={CLASS_STYLE[cls].label}
+                          classColour={rail}
+                          settles={o.payment_method ? PAYMENT_METHOD_LABEL[o.payment_method] || o.payment_method : undefined}
+                          backordered={(orderItems[o.id] || []).filter((i) => i.backordered).length}
+                        />
                       </div>
                     );
                   })}
                   {lane.cards.length === 0 && (
                     <div style={{ padding: "28px 12px", textAlign: "center", fontSize: 12, color: "var(--text-faint)" }}>
                       Nothing in this stage. Drag a card here.
+                    </div>
+                  )}
+                  {lane.total > lane.cards.length && (
+                    <div style={{ padding: "4px 10px 10px" }}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        fullWidth
+                        iconLeft="chevron-down"
+                        onClick={() => setShown((s) => ({ ...s, [lane.id]: lane.cards.length + LANE_PAGE }))}
+                      >
+                        Show {Math.min(LANE_PAGE, lane.total - lane.cards.length)} more of {lane.total}
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -330,8 +627,22 @@ export default function Board() {
       )}
 
       {view === "list" && (
-        <Card padding="none">
-          <div style={{ overflowX: "auto" }}>
+        /* The board is a fixed-height workspace — the kanban needs that, so the
+           root is height:100%. A Card dropped into it is a flex item with the
+           usual flex-shrink of 1, so it shrank to whatever space was left and
+           its own overflow:hidden quietly cut the table off: the rows were
+           there, drawn, and unreachable.
+
+           It now takes the leftover height deliberately and scrolls inside it,
+           which also keeps the search and the stage counts above it on screen
+           instead of scrolling them away. minHeight:0 is the part that makes a
+           flex child allowed to be shorter than its contents at all. */
+        <Card
+          padding="none"
+          className="board-list-card"
+          style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+        >
+          <div className="table-scroll" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             <DataTable
               columns={boardCols}
               rows={boardRows}
@@ -394,7 +705,7 @@ export default function Board() {
               <Select
                 size="md"
                 label="Driver"
-                options={team.filter((t) => t.role === "driver").map((t) => ({ value: t.id, label: t.name }))}
+                options={crewOptions}
                 value={assignDriver}
                 onChange={(e: any) => setAssignDriver(e.target.value)}
                 allowUnset

@@ -1,0 +1,36 @@
+# Demo recording
+
+Scripted walk-through of taking an order, recorded headlessly against a local
+`vite preview` with the Supabase REST surface mocked (`mock.mjs`), so it never
+touches real data. Signs in with a PIN, builds an order, saves it for later and
+resumes it, checks out a single delivery, then builds and splits a second order.
+
+    npm run build && npx vite preview --port 4173 &
+    npm i --no-save playwright-core
+    DEMO_OUT=/tmp/demo-raw node tools/demo/record.mjs
+
+Writes one `.webm` and `marks.json` (scene start/end in ms) to `DEMO_OUT`.
+Playwright's video recorder needs an ffmpeg binary; the system one works
+when linked at `$PLAYWRIGHT_BROWSERS_PATH/ffmpeg-<rev>/ffmpeg-linux`.
+
+## check_quotes.mjs
+
+A browser check of the quote flow against the same mock: Save as quote on
+step 2, the Quotes tab on the customer, the printed quotation, Mark sent,
+Use for an order (adjustment and prices carried), the quote reading
+"Taken as order" afterwards, and nothing of it on the board. Run it with the
+preview server on :4173:
+
+    node tools/demo/check_quotes.mjs
+
+## record_quotes.mjs, cards.mjs, assemble.py
+
+The third recording: quotes. `record_quotes.mjs` films the flow against the
+mock into `raw-quotes/` with `marks.json` for the scene cuts; `cards.mjs`
+makes the title and end cards; `assemble.py` cuts the scenes, lays one
+narration file per scene under them (`s1.wav` …), freezes footage that is
+shorter than its words, and joins the lot:
+
+    node tools/demo/record_quotes.mjs
+    node tools/demo/cards.mjs raw-quotes "Quotes" "Save as quote, track it, use it for an order"
+    python3 tools/demo/assemble.py raw-quotes vo raw-quotes quotes.mp4
